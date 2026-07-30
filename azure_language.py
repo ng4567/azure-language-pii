@@ -2,10 +2,18 @@ from __future__ import annotations
 
 import os
 
-from azure.ai.textanalytics import ExtractiveSummaryAction, TextAnalyticsClient
+from azure.ai.textanalytics import TextAnalyticsClient
 from azure.identity import DefaultAzureCredential
 
 from benchmark import PiiResult
+
+MAX_SENTENCE_COUNT = 3
+
+# The SDK default is 5 seconds, which would quantise every summarization
+# measurement to multiples of the poll cadence rather than reflecting service
+# latency. The speculative-parallel pipeline puts two summarizations on its
+# critical path, so it would pay that artefact twice.
+DEFAULT_POLLING_INTERVAL_SECONDS = 1
 
 
 class AzureLanguageService:
@@ -13,9 +21,13 @@ class AzureLanguageService:
         self,
         pii_client: TextAnalyticsClient,
         summary_client: TextAnalyticsClient,
+        credential=None,
+        polling_interval: int = DEFAULT_POLLING_INTERVAL_SECONDS,
     ) -> None:
         self._pii_client = pii_client
         self._summary_client = summary_client
+        self._credential = credential
+        self._polling_interval = polling_interval
 
     @classmethod
     def from_environment(cls) -> "AzureLanguageService":
@@ -30,6 +42,7 @@ class AzureLanguageService:
         return cls(
             TextAnalyticsClient(endpoint, credential),
             TextAnalyticsClient(endpoint, credential),
+            credential=credential,
         )
 
     def detect_pii(self, text: str) -> PiiResult:
@@ -43,11 +56,12 @@ class AzureLanguageService:
         )
 
     def summarize(self, text: str) -> str:
-        pages = self._summary_client.begin_analyze_actions(
+        poller = self._summary_client.begin_extract_summary(
             [text],
-            actions=[ExtractiveSummaryAction(max_sentence_count=3)],
-        ).result()
-        result = next(pages)[0]
+            max_sentence_count=MAX_SENTENCE_COUNT,
+            polling_interval=self._polling_interval,
+        )
+        result = next(iter(poller.result()))
         if result.is_error:
             raise RuntimeError(f"Extractive summarization failed: {result.message}")
         sentences = [sentence.text for sentence in result.sentences]
@@ -56,3 +70,5 @@ class AzureLanguageService:
     def close(self) -> None:
         self._pii_client.close()
         self._summary_client.close()
+        if self._credential is not None:
+            self._credential.close()
