@@ -5,12 +5,15 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "azure-ai-language-conversations>=1.1.0",
     "azure-ai-textanalytics>=5.4.0",
     "azure-identity>=1.25.0",
     "fastapi>=0.116.0",
-    "httpx>=0.28.0",
-    "openai>=2.51.0",
     "python-dotenv>=1.2.2",
     "uvicorn>=0.35.0",
+]
+
+[dependency-groups]
+# httpx is only needed by fastapi.testclient, so it stays out of the image.
+dev = [
+    "httpx>=0.28.0",
 ]
