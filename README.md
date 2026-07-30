@@ -1,6 +1,6 @@
 # Azure PII and Summarization Benchmark
 
-A local FastAPI dashboard for comparing two Azure AI Language pipelines:
+A FastAPI dashboard for comparing two Azure AI Language pipelines:
 
 1. **Sequential:** detect PII, redact the input, then summarize.
 2. **Speculative parallel:** detect PII and summarize concurrently. If PII is
@@ -109,6 +109,50 @@ only `LANGUAGE_ENDPOINT` and `AZURE_REGION` are required application settings.
 
 The container runs as non-root UID `10001`, listens on port `8000`, and exposes
 `GET /healthz` for health probes.
+
+## Deploy to Azure Container Apps
+
+The deployed demo is available at
+[https://ca-language-pii-dev-27a7.yellowtree-1fae237e.eastus2.azurecontainerapps.io](https://ca-language-pii-dev-27a7.yellowtree-1fae237e.eastus2.azurecontainerapps.io).
+
+The Bicep deployment reuses the named resource group, registry, Container Apps
+environment, Log Analytics workspace, and Azure AI Language resource in
+`infra/main.bicep`. Update those names for another Azure environment.
+
+Deploy the placeholder revision and managed-identity roles first:
+
+```bash
+DEPLOYER_OBJECT_ID="$(az ad signed-in-user show --query id -o tsv)"
+
+az deployment sub create \
+  --name language-pii-infra-27a7 \
+  --location eastus2 \
+  --template-file infra/main.bicep \
+  --parameters infra/main.parameters.json \
+  --parameters deployerObjectId="$DEPLOYER_OBJECT_ID"
+```
+
+After the `AcrPull` role is visible for the Container App identity, build the
+image and switch to it:
+
+```bash
+az acr build \
+  --registry regngasdf \
+  --image azure-language-pii:<tag> \
+  --file Dockerfile.azure .
+
+az deployment sub create \
+  --name language-pii-app-27a7 \
+  --location eastus2 \
+  --template-file infra/main.bicep \
+  --parameters infra/main.parameters.json \
+  --parameters deployerObjectId="$DEPLOYER_OBJECT_ID" \
+               containerImage=regngasdf.azurecr.io/azure-language-pii:<tag>
+```
+
+The Container App uses its system-assigned managed identity for both ACR image
+pulls and Azure AI Language access. Do not deploy the local service-principal
+values from `.env`.
 
 ## Pricing methodology
 

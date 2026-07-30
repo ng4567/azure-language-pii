@@ -1,6 +1,8 @@
 .env
-.env
+.copilot-azure/
+.playwright-mcp/
 .venv/
 __pycache__/
 *.py[cod]
 .pytest_cache/
+infra/main.json
