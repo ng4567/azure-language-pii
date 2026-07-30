@@ -142,11 +142,38 @@ textarea:focus { border-color: var(--green); box-shadow: 0 0 0 3px var(--green-s
 .parallel .bar-track { background: rgba(18,33,26,.13); }
 .bar { width: 0; height: 100%; border-radius: inherit; background: var(--lime); transition: width .8s ease; }
 .parallel .bar { background: var(--green); }
-.card-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; padding-top: 22px; border-top: 1px solid rgba(255,255,255,.2); }
+.card-stats { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; padding-top: 22px; border-top: 1px solid rgba(255,255,255,.2); }
 .parallel .card-stats { border-color: rgba(18,33,26,.15); }
 .card-stats span, .card-stats strong { display: block; }
 .card-stats span { margin-bottom: 5px; opacity: .65; font-size: 11px; text-transform: uppercase; }
 .card-stats strong { font-size: 16px; }
+.iteration-control { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; font-weight: 700; }
+.iteration-control input { width: 62px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: var(--ink); font: inherit; }
+
+.projection-panel { margin-top: 20px; padding: 28px; box-shadow: none; }
+.projection-lede { max-width: 760px; margin: 0 0 22px; color: var(--muted); font-size: 14px; line-height: 1.6; }
+.prevalence-control { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 16px; margin-bottom: 24px; }
+.prevalence-control > span { font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.prevalence-control input { width: 100%; accent-color: var(--green); }
+.prevalence-control output { min-width: 56px; font-size: 20px; font-weight: 800; text-align: right; font-variant-numeric: tabular-nums; }
+.projection-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; padding: 22px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.projection-grid span { display: block; margin-bottom: 6px; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.projection-grid strong { font-size: 19px; font-variant-numeric: tabular-nums; }
+.projection-grid strong.negative { color: var(--orange); }
+.chart-legend { display: flex; align-items: center; gap: 18px; margin-top: 24px; font-size: 12px; font-weight: 700; }
+.chart-legend span { display: inline-flex; align-items: center; gap: 7px; }
+.chart-legend small { margin-left: auto; color: var(--muted); font-weight: 400; }
+.swatch { width: 11px; height: 11px; border-radius: 3px; }
+.swatch.sequential { background: var(--green); }
+.swatch.parallel { background: var(--lime); }
+.projection-chart { display: flex; align-items: flex-end; gap: 5px; height: 170px; margin-top: 12px; }
+.chart-column { display: flex; flex: 1; flex-direction: column; align-items: center; gap: 6px; height: 100%; }
+.chart-stack { display: flex; align-items: flex-end; gap: 2px; width: 100%; height: 100%; }
+.chart-bar { flex: 1; min-height: 2px; border-radius: 3px 3px 0 0; }
+.chart-bar.sequential { background: var(--green); }
+.chart-bar.parallel { background: var(--lime); }
+.chart-column small { color: var(--muted); font-size: 10px; font-variant-numeric: tabular-nums; }
+
 .detail-grid, .summary-grid { margin-top: 20px; }
 .detail-panel, .summary-panel, .redacted-panel { padding: 28px; box-shadow: none; }
 .timing-row { display: grid; grid-template-columns: 1fr auto; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--line); }
@@ -180,6 +207,13 @@ footer p { max-width: 650px; margin: 8px 0 0; line-height: 1.5; }
   .privacy-note { grid-template-columns: 1fr; gap: 8px; }
   .comparison-grid, .detail-grid, .summary-grid { grid-template-columns: 1fr; }
   .card-stats { gap: 8px; }
+  .iteration-control { width: 100%; justify-content: space-between; }
+  .prevalence-control { grid-template-columns: 1fr auto; }
+  .prevalence-control input { grid-column: 1 / -1; }
+  .projection-grid { grid-template-columns: repeat(2, 1fr); }
+  .projection-chart { height: 130px; }
+  .chart-legend { flex-wrap: wrap; gap: 12px; }
+  .chart-legend small { margin-left: 0; flex-basis: 100%; }
   footer { grid-template-columns: 1fr; }
   .source-links { align-items: start; }
 }
