@@ -1,49 +1,96 @@
-# Azure Language Summarization and PII Sample Design
+# Azure Language PII Pipeline Benchmark Design
 
 ## Purpose
 
-Provide a minimal runnable Python sample that sends the hard-coded text
-`"hello, world"` to Azure AI Language for Conversational Summarization,
-Extractive Summarization, and conversation PII detection.
+Give a customer the evidence to choose between running PII detection
+sequentially with summarization or speculatively in parallel. The deliverable
+is a local FastAPI dashboard that measures both pipelines against a real Azure
+AI Language resource, prices them from official Microsoft retail meters, and
+projects the trade-off across corpus PII prevalence.
 
-## Architecture
+## Pipelines under test
 
-`main.py` will load the Azure AI Language resource endpoint from
-`LANGUAGE_ENDPOINT` and create one shared `DefaultAzureCredential`. It will
-pass that credential to `ConversationAnalysisClient` for Conversational
-Summarization and to `TextAnalyticsClient` for Extractive Summarization and
-PII detection. Two clients are required because Azure exposes conversational
-and document analysis through distinct SDK clients. The application will not
-load, store, print, or require API keys. Local execution relies on `az login`;
-deployed execution can use a managed identity with the appropriate Azure AI
-Language role.
+**Sequential.** Detect PII, redact, then summarize the redacted text. Two
+billable operations. Latency is `t_pii + t_summary` regardless of whether the
+document contains PII.
 
-## Request and result flow
+**Speculative parallel.** Start PII detection and summarization concurrently on
+the raw text. If no PII is found, the speculative summary is used as-is and the
+run costs the same as sequential while completing in
+`max(t_pii, t_summary)`. If PII is found, the speculative summary is discarded
+and the redacted text is summarized again — three billable operations and
+`max(t_pii, t_summary) + t_summary` of latency.
 
-1. Validate that `LANGUAGE_ENDPOINT` is configured as the root endpoint of an
-   Azure AI Language resource.
-2. Authenticate for the Cognitive Services scope through
-   `DefaultAzureCredential`.
-3. Submit a single hard-coded conversation item containing `"hello, world"` to
-   `ConversationAnalysisClient` with a `ConversationalSummarizationTask`.
-   Submit the same text to `TextAnalyticsClient` for extractive summarization
-   and PII detection.
-4. Await each long-running summarization operation, then print its result in a
-   labeled, readable form. Print the PII entities and redacted text separately.
-5. Surface authentication, configuration, service, and per-document errors
-   with actionable messages and a nonzero process exit.
+Parallel therefore buys latency with a conditional extra summarization. It is
+never cheaper.
 
-## Configuration and documentation
+## Measurement requirements
 
-An `.env.example` will document the single endpoint variable without including
-credentials. The README will explain how to discover the Language resource
-endpoint using Azure CLI, configure the environment, run `az login`, and
-execute the sample. The code will preserve the existing dependency-management
-conventions and add packages only when required by the selected SDK API.
+The comparison is only meaningful if the measurement is not biased toward one
+pipeline, which imposes four constraints.
 
-## Validation
+1. **Warm up before timing.** Each `TextAnalyticsClient` caches its bearer token
+   on its own pipeline policy, so the first call through each client pays token
+   acquisition plus a TLS handshake. Untimed warm-up calls on both clients
+   absorb this. Without it, whichever pipeline ran first would carry the entire
+   one-time cost.
+2. **Alternate pipeline order** across iterations, so neither accrues a
+   residual advantage from consistently running second.
+3. **Repeat and aggregate.** Report median, min, and p95 across N iterations
+   rather than a single network-bound sample.
+4. **Override the LRO poll interval.** Extractive summarization is a
+   long-running operation whose SDK default poll interval is 5 seconds. Left
+   alone it quantises every summarization measurement to the poll cadence, and
+   the parallel pipeline pays that artefact twice. The app polls at 1 second and
+   documents that the metric is submit-plus-poll wall time.
 
-Validation will cover syntax/import compatibility and an executable
-configuration/authentication path when the logged-in Azure identity has access
-to the discovered resource. No secret values will be added to tracked files or
-command output.
+## Cost model
+
+One text record is 1,000 characters, counted in UTF-16 code units, charged per
+operation with each started 1,000 characters rounded up. Rates come from the
+Azure Retail Prices API for the configured region, restricted to pay-as-you-go,
+first-tier, per-1K rows of the `Standard Text Records` and
+`Standard Summarization Text Records` meters. The feed is paginated and mixes
+row types, so the loader follows `NextPageLink` and filters on `type`,
+`armRegionName`, `unitOfMeasure`, and `tierMinimumUnits`.
+
+## Prevalence projection
+
+The measured document is a single point; the decision turns on `p`, the fraction
+of the corpus containing any PII.
+
+```
+E[latency_sequential] = t_sequential                       (flat in p)
+E[latency_parallel]   = t_overlapped + p × t_summary
+E[cost_parallel]      = cost_sequential + p × cost_summary
+break-even p          = (t_sequential − t_overlapped) / t_summary
+```
+
+`t_overlapped` is measured rather than modelled as `max()`: it is the parallel
+run's wall time minus the conditional retry, so it already includes real thread
+and connection contention.
+
+Two limits are stated in the UI rather than hidden. `p` is not independent of
+document length, since longer documents are likelier to contain an entity — the
+projection describes a corpus resembling the measured document. And
+within-document PII density does not enter the model, because billing is per
+input character, redaction preserves length, and the pipeline discards on any
+detection.
+
+## Out of scope
+
+Span-aware speculation — keeping the speculative summary unless a selected
+summary sentence overlaps a PII span — would lower the retry rate below `p` and
+make density matter. It is sound for extractive summarization because output
+sentences are verbatim input spans, but not for abstractive. It is deliberately
+not implemented here.
+
+Service-side input logging is left at the Azure default. The speculative path
+sends un-redacted text to Azure; this is an accepted trade-off for the
+benchmark, documented in the README rather than mitigated.
+
+## Configuration
+
+`LANGUAGE_ENDPOINT` must be the root Language resource endpoint, not a Foundry
+project endpoint. `AZURE_REGION` selects the pricing region. Authentication is
+`DefaultAzureCredential` throughout; no API keys are read, stored, or logged.
