@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from contextlib import asynccontextmanager
+from functools import lru_cache
 from pathlib import Path
 
 from azure.core.exceptions import HttpResponseError
@@ -9,11 +10,18 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
+import tradeoff
 from azure_language import AzureLanguageService
-from benchmark import BenchmarkService, PipelineResult
-from pricing import RetailPricing, estimate_pipeline_cost
+from benchmark import (
+    DEFAULT_ITERATIONS,
+    MAX_ITERATIONS,
+    BenchmarkService,
+    PipelineResult,
+    billable_characters,
+)
+from pricing import PricingUnavailableError, RetailPricing, estimate_pipeline_cost
 
 ROOT = Path(__file__).parent
 MAX_TEXT_LENGTH = 5_000
@@ -21,8 +29,11 @@ MAX_TEXT_LENGTH = 5_000
 
 class BenchmarkRequest(BaseModel):
     text: str
+    iterations: int = Field(default=DEFAULT_ITERATIONS, ge=1, le=MAX_ITERATIONS)
+    warm_up: bool = True
 
 
+@lru_cache(maxsize=1)
 def _load_samples() -> dict[str, dict[str, str | int]]:
     samples = {}
     for key, filename, label in (
@@ -34,7 +45,7 @@ def _load_samples() -> dict[str, dict[str, str | int]]:
             "label": label,
             "filename": filename,
             "content": content,
-            "characters": len(content),
+            "characters": billable_characters(content),
         }
     return samples
 
@@ -65,7 +76,7 @@ def create_app(language_service=None, pricing_service=None) -> FastAPI:
 
     application = FastAPI(
         title="Azure PII and Summarization Benchmark",
-        version="1.0.0",
+        version="2.0.0",
         lifespan=lifespan,
     )
     if language_service is not None:
@@ -86,6 +97,14 @@ def create_app(language_service=None, pricing_service=None) -> FastAPI:
     def health():
         return {"status": "ok"}
 
+    @application.get("/api/config")
+    def config():
+        return {
+            "max_text_length": MAX_TEXT_LENGTH,
+            "default_iterations": DEFAULT_ITERATIONS,
+            "max_iterations": MAX_ITERATIONS,
+        }
+
     @application.get("/api/samples")
     def samples():
         return {"samples": _load_samples()}
@@ -94,7 +113,7 @@ def create_app(language_service=None, pricing_service=None) -> FastAPI:
     def pricing():
         try:
             return application.state.pricing.get_rates().to_dict()
-        except RuntimeError as error:
+        except PricingUnavailableError as error:
             raise HTTPException(status_code=502, detail=str(error)) from error
 
     @application.post("/api/benchmark")
@@ -102,38 +121,48 @@ def create_app(language_service=None, pricing_service=None) -> FastAPI:
         text = request.text.strip()
         if not text:
             raise HTTPException(status_code=400, detail="Text is required.")
-        if len(text) > MAX_TEXT_LENGTH:
+        # Measured the way Azure measures it, so astral characters cannot slip
+        # a document past this guard and into a service-side length rejection.
+        characters = billable_characters(text)
+        if characters > MAX_TEXT_LENGTH:
             raise HTTPException(
                 status_code=400,
                 detail=f"Text must be {MAX_TEXT_LENGTH:,} characters or fewer.",
             )
 
+        try:
+            rates = application.state.pricing.get_rates()
+        except PricingUnavailableError as error:
+            raise HTTPException(status_code=502, detail=str(error)) from error
+
         service = BenchmarkService(
             application.state.language.detect_pii,
             application.state.language.summarize,
+            iterations=request.iterations,
         )
         try:
-            rates = application.state.pricing.get_rates()
-            sequential = service.run_sequential(text)
-            parallel = service.run_parallel(text)
+            comparison = service.compare(text, warm_up=request.warm_up)
         except (HttpResponseError, RuntimeError) as error:
             raise HTTPException(
                 status_code=502,
                 detail=f"Azure benchmark failed: {error}",
             ) from error
 
+        sequential = comparison.sequential
+        parallel = comparison.parallel
         speedup = (
-            sequential.total_ms / parallel.total_ms
-            if parallel.total_ms > 0
-            else 0
+            sequential.total_ms / parallel.total_ms if parallel.total_ms > 0 else 0
         )
         return {
-            "characters": len(text),
+            "characters": characters,
+            "iterations": comparison.iterations,
+            "warm_up": request.warm_up,
             "speedup": speedup,
             "latency_saved_ms": sequential.total_ms - parallel.total_ms,
             "sequential": _serialize_result(sequential, rates),
             "parallel": _serialize_result(parallel, rates),
             "pricing": rates.to_dict(),
+            "projection": tradeoff.project(sequential, parallel, rates).to_dict(),
         }
 
     return application
