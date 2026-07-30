@@ -1,0 +1,12 @@
+services:
+  app:
+    build:
+      context: .
+    ports:
+      - "8000:8000"
+    environment:
+      - LANGUAGE_ENDPOINT=${LANGUAGE_ENDPOINT:?Set LANGUAGE_ENDPOINT}
+      - AZURE_REGION=${AZURE_REGION:-eastus2}
+      - AZURE_CLIENT_ID
+      - AZURE_CLIENT_SECRET
+      - AZURE_TENANT_ID

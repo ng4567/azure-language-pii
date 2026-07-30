@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PII Pipeline Lab</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <main>
+    <header class="hero">
+      <div>
+        <p class="eyebrow">Azure AI Language · Performance Lab</p>
+        <h1>Privacy pipeline,<br><span>measured.</span></h1>
+        <p class="lede">Compare redact-first processing with speculative parallel execution—using the same text, the same Azure resource, and official Microsoft retail pricing.</p>
+      </div>
+      <div class="hero-badge">
+        <span class="pulse"></span>
+        <div><strong>Entra authenticated</strong><small>No API keys in the browser</small></div>
+      </div>
+    </header>
+
+    <section class="panel input-panel">
+      <div class="section-heading">
+        <div>
+          <p class="step">01 · INPUT</p>
+          <h2>Choose your test payload</h2>
+        </div>
+        <span id="character-count" class="character-count">0 / 5,000 characters</span>
+      </div>
+      <div class="source-tabs" role="group" aria-label="Input source">
+        <button class="source-tab active" data-source="pii">PII.txt</button>
+        <button class="source-tab" data-source="no_pii">No PII.txt</button>
+        <button class="source-tab" data-source="custom">Custom text</button>
+      </div>
+      <textarea id="input-text" maxlength="5000" aria-label="Benchmark text" spellcheck="true"></textarea>
+      <div class="input-footer">
+        <p id="sample-note">Synthetic sample · equal character count</p>
+        <button id="run-button" class="run-button">
+          <span>Run comparison</span>
+          <span class="arrow">→</span>
+        </button>
+      </div>
+    </section>
+
+    <section class="privacy-note">
+      <strong>How speculative parallel works</strong>
+      <p>PII detection and summarization start together. If PII is found, the first summary is discarded and the redacted input is summarized again. Unsafe speculative summaries are never returned or rendered.</p>
+    </section>
+
+    <section id="status" class="status" aria-live="polite"></section>
+
+    <section id="results" class="results hidden">
+      <div class="section-heading results-heading">
+        <div>
+          <p class="step">02 · RESULTS</p>
+          <h2>Price meets performance</h2>
+        </div>
+        <div id="speedup-badge" class="speedup-badge"></div>
+      </div>
+
+      <div class="comparison-grid">
+        <article class="result-card sequential">
+          <div class="card-label"><span>A</span> Sequential</div>
+          <p class="pipeline-flow">PII → redact → summarize</p>
+          <div class="metric"><strong id="sequential-latency">—</strong><span>total latency</span></div>
+          <div class="bar-track"><div id="sequential-bar" class="bar"></div></div>
+          <div class="card-stats">
+            <div><span>Est. retail cost</span><strong id="sequential-cost">—</strong></div>
+            <div><span>Azure calls</span><strong id="sequential-calls">—</strong></div>
+            <div><span>Text records</span><strong id="sequential-records">—</strong></div>
+          </div>
+        </article>
+
+        <article class="result-card parallel">
+          <div class="card-label"><span>B</span> Speculative parallel</div>
+          <p class="pipeline-flow">PII ∥ summarize → conditional retry</p>
+          <div class="metric"><strong id="parallel-latency">—</strong><span>total latency</span></div>
+          <div class="bar-track"><div id="parallel-bar" class="bar"></div></div>
+          <div class="card-stats">
+            <div><span>Est. retail cost</span><strong id="parallel-cost">—</strong></div>
+            <div><span>Azure calls</span><strong id="parallel-calls">—</strong></div>
+            <div><span>Text records</span><strong id="parallel-records">—</strong></div>
+          </div>
+        </article>
+      </div>
+
+      <div class="detail-grid">
+        <article class="panel detail-panel">
+          <p class="step">OPERATION TIMELINE</p>
+          <div id="timing-table"></div>
+        </article>
+        <article class="panel detail-panel">
+          <p class="step">PRIVACY OUTCOME</p>
+          <div id="privacy-outcome"></div>
+        </article>
+      </div>
+
+      <div class="summary-grid">
+        <article class="panel summary-panel">
+          <p class="step">SEQUENTIAL SUMMARY</p>
+          <p id="sequential-summary"></p>
+        </article>
+        <article class="panel summary-panel">
+          <p class="step">PARALLEL SUMMARY</p>
+          <p id="parallel-summary"></p>
+        </article>
+      </div>
+
+      <article id="redacted-panel" class="panel redacted-panel">
+        <p class="step">REDACTED INPUT</p>
+        <p id="redacted-text"></p>
+      </article>
+    </section>
+
+    <footer>
+      <div>
+        <strong>Retail estimate methodology</strong>
+        <p>Each started 1,000 characters is one text record per operation. Estimates exclude negotiated rates, commitment tiers, free grants, taxes, and currency conversion.</p>
+      </div>
+      <div class="source-links">
+        <a id="pricing-link" href="https://azure.microsoft.com/pricing/details/language/" target="_blank" rel="noreferrer">Azure Language pricing ↗</a>
+        <a id="limits-link" href="https://learn.microsoft.com/azure/ai-services/language-service/concepts/data-limits" target="_blank" rel="noreferrer">Billing unit documentation ↗</a>
+      </div>
+      <p id="meter-note" class="meter-note">Loading Microsoft retail meters…</p>
+    </footer>
+  </main>
+  <script src="/static/app.js" defer></script>
+</body>
+</html>

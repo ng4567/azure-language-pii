@@ -1,112 +1,142 @@
+from __future__ import annotations
 
 import os
-import sys
+from contextlib import asynccontextmanager
+from pathlib import Path
 
-from azure.ai.language.conversations import ConversationAnalysisClient
-from azure.ai.textanalytics import ExtractiveSummaryAction, TextAnalyticsClient
 from azure.core.exceptions import HttpResponseError
-from azure.identity import DefaultAzureCredential
 from dotenv import load_dotenv
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 
-TEXT = "hello, world"
+from azure_language import AzureLanguageService
+from benchmark import BenchmarkService, PipelineResult
+from pricing import RetailPricing, estimate_pipeline_cost
 
-
-def require_endpoint() -> str:
-    endpoint = os.getenv("LANGUAGE_ENDPOINT", "").rstrip("/")
-    if not endpoint:
-        raise RuntimeError("LANGUAGE_ENDPOINT is required.")
-    if "/api/projects/" in endpoint:
-        raise RuntimeError(
-            "LANGUAGE_ENDPOINT must be the root Language resource endpoint, not a project endpoint."
-        )
-    return endpoint
+ROOT = Path(__file__).parent
+MAX_TEXT_LENGTH = 5_000
 
 
-def conversational_summary(client: ConversationAnalysisClient) -> None:
-    poller = client.begin_conversation_analysis(
-        {
-            "displayName": "Hello world conversational summary",
-            "analysisInput": {
-                "conversations": [
-                    {
-                        "id": "hello-world",
-                        "language": "en",
-                        "modality": "text",
-                        "conversationItems": [
-                            {
-                                "id": "1",
-                                "participantId": "user",
-                                "role": "Customer",
-                                "text": TEXT,
-                            }
-                        ],
-                    }
-                ]
-            },
-            "tasks": [
-                {
-                    "taskName": "issue-summary",
-                    "kind": "ConversationalSummarizationTask",
-                    "parameters": {"summaryAspects": ["issue"]},
-                }
-            ],
+class BenchmarkRequest(BaseModel):
+    text: str
+
+
+def _load_samples() -> dict[str, dict[str, str | int]]:
+    samples = {}
+    for key, filename, label in (
+        ("pii", "PII.txt", "PII sample"),
+        ("no_pii", "No PII.txt", "No-PII sample"),
+    ):
+        content = (ROOT / "samples" / filename).read_text().strip()
+        samples[key] = {
+            "label": label,
+            "filename": filename,
+            "content": content,
+            "characters": len(content),
         }
-    )
-    result = poller.result()
-    task_result = result["tasks"]["items"][0]["results"]
-    if task_result["errors"]:
-        raise RuntimeError(f"Conversational Summarization failed: {task_result['errors']}")
-
-    print("Conversational Summarization:")
-    for summary in task_result["conversations"][0]["summaries"]:
-        print(f"- {summary['aspect']}: {summary['text']}")
+    return samples
 
 
-def extractive_summary(client: TextAnalyticsClient) -> None:
-    result = next(
-        client.begin_analyze_actions(
-            [TEXT],
-            actions=[ExtractiveSummaryAction(max_sentence_count=1)],
-        ).result()
-    )[0]
-    if result.is_error:
-        raise RuntimeError(f"Extractive Summarization failed: {result.message}")
-
-    print("\nExtractive Summarization:")
-    for sentence in result.sentences:
-        print(f"- {sentence.text}")
+def _serialize_result(result: PipelineResult, rates) -> dict[str, object]:
+    return {
+        **result.to_dict(),
+        "cost": estimate_pipeline_cost(result, rates).to_dict(),
+    }
 
 
-def pii_detection(client: TextAnalyticsClient) -> None:
-    result = client.recognize_pii_entities([TEXT])[0]
-    if result.is_error:
-        raise RuntimeError(f"PII detection failed: {result.message}")
-
-    print("\nPII Detection:")
-    print(f"- Redacted text: {result.redacted_text}")
-    for entity in result.entities:
-        print(
-            f"- {entity.category}: {entity.text} "
-            f"(confidence: {entity.confidence_score:.2f})"
+def create_app(language_service=None, pricing_service=None) -> FastAPI:
+    @asynccontextmanager
+    async def lifespan(application: FastAPI):
+        load_dotenv()
+        owns_language_service = language_service is None
+        application.state.language = (
+            language_service or AzureLanguageService.from_environment()
         )
+        application.state.pricing = pricing_service or RetailPricing(
+            os.getenv("AZURE_REGION", "eastus2")
+        )
+        try:
+            yield
+        finally:
+            if owns_language_service:
+                application.state.language.close()
+
+    application = FastAPI(
+        title="Azure PII and Summarization Benchmark",
+        version="1.0.0",
+        lifespan=lifespan,
+    )
+    if language_service is not None:
+        application.state.language = language_service
+    if pricing_service is not None:
+        application.state.pricing = pricing_service
+    application.mount(
+        "/static",
+        StaticFiles(directory=ROOT / "static"),
+        name="static",
+    )
+
+    @application.get("/", include_in_schema=False)
+    def index():
+        return FileResponse(ROOT / "static" / "index.html")
+
+    @application.get("/healthz", include_in_schema=False)
+    def health():
+        return {"status": "ok"}
+
+    @application.get("/api/samples")
+    def samples():
+        return {"samples": _load_samples()}
+
+    @application.get("/api/pricing")
+    def pricing():
+        try:
+            return application.state.pricing.get_rates().to_dict()
+        except RuntimeError as error:
+            raise HTTPException(status_code=502, detail=str(error)) from error
+
+    @application.post("/api/benchmark")
+    def benchmark(request: BenchmarkRequest):
+        text = request.text.strip()
+        if not text:
+            raise HTTPException(status_code=400, detail="Text is required.")
+        if len(text) > MAX_TEXT_LENGTH:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Text must be {MAX_TEXT_LENGTH:,} characters or fewer.",
+            )
+
+        service = BenchmarkService(
+            application.state.language.detect_pii,
+            application.state.language.summarize,
+        )
+        try:
+            rates = application.state.pricing.get_rates()
+            sequential = service.run_sequential(text)
+            parallel = service.run_parallel(text)
+        except (HttpResponseError, RuntimeError) as error:
+            raise HTTPException(
+                status_code=502,
+                detail=f"Azure benchmark failed: {error}",
+            ) from error
+
+        speedup = (
+            sequential.total_ms / parallel.total_ms
+            if parallel.total_ms > 0
+            else 0
+        )
+        return {
+            "characters": len(text),
+            "speedup": speedup,
+            "latency_saved_ms": sequential.total_ms - parallel.total_ms,
+            "sequential": _serialize_result(sequential, rates),
+            "parallel": _serialize_result(parallel, rates),
+            "pricing": rates.to_dict(),
+        }
+
+    return application
 
 
-def main() -> None:
-    load_dotenv()
-    endpoint = require_endpoint()
-    credential = DefaultAzureCredential()
-
-    with ConversationAnalysisClient(endpoint, credential) as conversation_client:
-        conversational_summary(conversation_client)
-    with TextAnalyticsClient(endpoint, credential) as text_client:
-        extractive_summary(text_client)
-        pii_detection(text_client)
-
-
-if __name__ == "__main__":
-    try:
-        main()
-    except (HttpResponseError, RuntimeError) as error:
-        print(error, file=sys.stderr)
-        raise SystemExit(1) from error
-
+app = create_app()
