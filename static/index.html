@@ -26,16 +26,20 @@
           <p class="step">01 · INPUT</p>
           <h2>Choose your test payload</h2>
         </div>
-        <span id="character-count" class="character-count">0 / 5,000 characters</span>
+        <span id="character-count" class="character-count">0 characters</span>
       </div>
       <div class="source-tabs" role="group" aria-label="Input source">
         <button class="source-tab active" data-source="pii">PII.txt</button>
         <button class="source-tab" data-source="no_pii">No PII.txt</button>
         <button class="source-tab" data-source="custom">Custom text</button>
       </div>
-      <textarea id="input-text" maxlength="5000" aria-label="Benchmark text" spellcheck="true"></textarea>
+      <textarea id="input-text" aria-label="Benchmark text" spellcheck="true"></textarea>
       <div class="input-footer">
         <p id="sample-note">Synthetic sample · equal character count</p>
+        <label class="iteration-control">
+          <span>Iterations</span>
+          <input id="iterations" type="number" min="1" max="10" value="3">
+        </label>
         <button id="run-button" class="run-button">
           <span>Run comparison</span>
           <span class="arrow">→</span>
@@ -45,7 +49,7 @@
 
     <section class="privacy-note">
       <strong>How speculative parallel works</strong>
-      <p>PII detection and summarization start together. If PII is found, the first summary is discarded and the redacted input is summarized again. Unsafe speculative summaries are never returned or rendered.</p>
+      <p>PII detection and summarization start together. If PII is found, the first summary is discarded and the redacted input is summarized again. Unsafe speculative summaries are never returned or rendered by this backend — though the speculative call does send un-redacted text to Azure.</p>
     </section>
 
     <section id="status" class="status" aria-live="polite"></section>
@@ -63,9 +67,10 @@
         <article class="result-card sequential">
           <div class="card-label"><span>A</span> Sequential</div>
           <p class="pipeline-flow">PII → redact → summarize</p>
-          <div class="metric"><strong id="sequential-latency">—</strong><span>total latency</span></div>
+          <div class="metric"><strong id="sequential-latency">—</strong><span>median latency</span></div>
           <div class="bar-track"><div id="sequential-bar" class="bar"></div></div>
           <div class="card-stats">
+            <div><span>Spread (min–p95)</span><strong id="sequential-spread">—</strong></div>
             <div><span>Est. retail cost</span><strong id="sequential-cost">—</strong></div>
             <div><span>Azure calls</span><strong id="sequential-calls">—</strong></div>
             <div><span>Text records</span><strong id="sequential-records">—</strong></div>
@@ -75,15 +80,46 @@
         <article class="result-card parallel">
           <div class="card-label"><span>B</span> Speculative parallel</div>
           <p class="pipeline-flow">PII ∥ summarize → conditional retry</p>
-          <div class="metric"><strong id="parallel-latency">—</strong><span>total latency</span></div>
+          <div class="metric"><strong id="parallel-latency">—</strong><span>median latency</span></div>
           <div class="bar-track"><div id="parallel-bar" class="bar"></div></div>
           <div class="card-stats">
+            <div><span>Spread (min–p95)</span><strong id="parallel-spread">—</strong></div>
             <div><span>Est. retail cost</span><strong id="parallel-cost">—</strong></div>
             <div><span>Azure calls</span><strong id="parallel-calls">—</strong></div>
             <div><span>Text records</span><strong id="parallel-records">—</strong></div>
           </div>
         </article>
       </div>
+
+      <section class="panel projection-panel">
+        <div class="section-heading">
+          <div>
+            <p class="step">03 · CORPUS PROJECTION</p>
+            <h2>Where does your corpus sit?</h2>
+          </div>
+          <div id="break-even-badge" class="speedup-badge"></div>
+        </div>
+        <p class="projection-lede">The measured document is one point. What decides the trade-off is the fraction of your documents that contain <em>any</em> PII, since that is how often the speculative summary is thrown away. Longer documents are more likely to contain an entity, so this projection describes a corpus whose documents resemble the one measured.</p>
+        <label class="prevalence-control" for="prevalence">
+          <span>Documents containing PII</span>
+          <input id="prevalence" type="range" min="0" max="100" step="5" value="50">
+          <output id="prevalence-value">50%</output>
+        </label>
+        <div class="projection-grid">
+          <div><span>Sequential latency</span><strong id="projected-sequential-ms">—</strong></div>
+          <div><span>Parallel latency</span><strong id="projected-parallel-ms">—</strong></div>
+          <div><span>Latency saved</span><strong id="projected-saved-ms">—</strong></div>
+          <div><span>Sequential cost / doc</span><strong id="projected-sequential-usd">—</strong></div>
+          <div><span>Parallel cost / doc</span><strong id="projected-parallel-usd">—</strong></div>
+          <div><span>Price of a second saved</span><strong id="projected-rate">—</strong></div>
+        </div>
+        <div class="chart-legend">
+          <span><i class="swatch sequential"></i>Sequential</span>
+          <span><i class="swatch parallel"></i>Speculative parallel</span>
+          <small>expected latency per document</small>
+        </div>
+        <div id="projection-chart" class="projection-chart"></div>
+      </section>
 
       <div class="detail-grid">
         <article class="panel detail-panel">
