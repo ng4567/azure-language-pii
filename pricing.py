@@ -1,19 +1,36 @@
 from __future__ import annotations
 
 import json
+import threading
+import time
 from dataclasses import asdict, dataclass
-from functools import lru_cache
-from typing import Any
+from typing import Any, Iterator
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
-from benchmark import PipelineResult, text_records
+from benchmark import (
+    PII_OPERATION,
+    SUMMARY_OPERATIONS,
+    PipelineResult,
+    records_for_length,
+)
 
 RETAIL_PRICES_URL = "https://prices.azure.com/api/retail/prices"
 PRICING_PAGE_URL = "https://azure.microsoft.com/pricing/details/language/"
 DATA_LIMITS_URL = (
     "https://learn.microsoft.com/azure/ai-services/language-service/concepts/data-limits"
 )
+
+PII_METER_NAME = "Standard Text Records"
+SUMMARY_METER_NAME = "Standard Summarization Text Records"
+
+# The retail feed pages at 100 items; this bounds a pathological crawl.
+MAX_PRICING_PAGES = 20
+DEFAULT_CACHE_TTL_SECONDS = 3600.0
+
+
+class PricingUnavailableError(RuntimeError):
+    """Raised when official Microsoft retail pricing cannot be resolved."""
 
 
 @dataclass(frozen=True)
@@ -51,20 +68,43 @@ class CostEstimate:
         return asdict(self)
 
 
+def _billable_items(items: list[dict[str, Any]], region: str) -> Iterator[dict[str, Any]]:
+    """Yield only the pay-as-you-go, first-tier, per-1K meters for ``region``.
+
+    The retail feed mixes ``Consumption`` with ``DevTestConsumption`` and
+    reservation rows under the same ``meterName``, and returns one row per
+    commitment tier. Without this filter a later row silently overwrites the
+    rate we actually want.
+    """
+    for item in items:
+        item_type = item.get("type")
+        if item_type is not None and item_type != "Consumption":
+            continue
+        item_region = item.get("armRegionName")
+        if region and item_region is not None and item_region != region:
+            continue
+        if item.get("unitOfMeasure") != "1K":
+            continue
+        if float(item.get("tierMinimumUnits") or 0) != 0:
+            continue
+        yield item
+
+
 def parse_retail_rates(items: list[dict[str, Any]], region: str) -> RetailRates:
-    by_name = {
-        item["meterName"]: item
-        for item in items
-        if item.get("unitOfMeasure") == "1K"
-        and float(item.get("tierMinimumUnits", 0)) == 0
-    }
-    pii_item = by_name.get("Standard Text Records")
-    summary_item = by_name.get("Standard Summarization Text Records")
+    by_name: dict[str, dict[str, Any]] = {}
+    for item in _billable_items(items, region):
+        # First match wins so the result is deterministic across feed ordering.
+        by_name.setdefault(item["meterName"], item)
+
+    pii_item = by_name.get(PII_METER_NAME)
+    summary_item = by_name.get(SUMMARY_METER_NAME)
     if pii_item is None:
-        raise RuntimeError("Microsoft retail pricing did not return Standard Text Records.")
+        raise PricingUnavailableError(
+            f"Microsoft retail pricing did not return {PII_METER_NAME}."
+        )
     if summary_item is None:
-        raise RuntimeError(
-            "Microsoft retail pricing did not return Standard Summarization Text Records."
+        raise PricingUnavailableError(
+            f"Microsoft retail pricing did not return {SUMMARY_METER_NAME}."
         )
 
     meters = tuple(
@@ -84,17 +124,22 @@ def parse_retail_rates(items: list[dict[str, Any]], region: str) -> RetailRates:
     )
 
 
-def estimate_pipeline_cost(
-    result: PipelineResult, rates: RetailRates
-) -> CostEstimate:
+def estimate_pipeline_cost(result: PipelineResult, rates: RetailRates) -> CostEstimate:
+    """Cost of a single execution of ``result``'s pipeline.
+
+    ``result.operations`` carries one entry per distinct operation, so this is
+    a per-document cost regardless of how many iterations were measured.
+    """
     pii_records = 0
     summary_records = 0
     for operation in result.operations:
-        records = text_records("x" * operation.characters)
-        if operation.name == "pii":
+        records = records_for_length(operation.characters)
+        if operation.name == PII_OPERATION:
             pii_records += records
-        else:
+        elif operation.name in SUMMARY_OPERATIONS:
             summary_records += records
+        else:
+            raise ValueError(f"Unknown billable operation: {operation.name!r}")
     return CostEstimate(
         pii_records=pii_records,
         summary_records=summary_records,
@@ -107,11 +152,32 @@ def estimate_pipeline_cost(
 
 
 class RetailPricing:
-    def __init__(self, region: str) -> None:
-        self._region = region
+    """Loads regional retail rates, cached with a TTL so prices can refresh."""
 
-    @lru_cache(maxsize=1)
+    def __init__(
+        self,
+        region: str,
+        ttl_seconds: float = DEFAULT_CACHE_TTL_SECONDS,
+        timeout: float = 10.0,
+    ) -> None:
+        self._region = region
+        self._ttl_seconds = ttl_seconds
+        self._timeout = timeout
+        self._lock = threading.Lock()
+        self._cached: RetailRates | None = None
+        self._cached_at = 0.0
+
     def get_rates(self) -> RetailRates:
+        with self._lock:
+            now = time.monotonic()
+            if self._cached is not None and now - self._cached_at < self._ttl_seconds:
+                return self._cached
+            rates = parse_retail_rates(self._fetch_items(), self._region)
+            self._cached = rates
+            self._cached_at = now
+            return rates
+
+    def _fetch_items(self) -> list[dict[str, Any]]:
         query = urlencode(
             {
                 "$filter": (
@@ -120,15 +186,25 @@ class RetailPricing:
                 )
             }
         )
+        url = f"{RETAIL_PRICES_URL}?{query}"
+        items: list[dict[str, Any]] = []
+        for _ in range(MAX_PRICING_PAGES):
+            payload = self._get_json(url)
+            items.extend(payload.get("Items", []))
+            url = payload.get("NextPageLink")
+            if not url:
+                break
+        return items
+
+    def _get_json(self, url: str) -> dict[str, Any]:
         request = Request(
-            f"{RETAIL_PRICES_URL}?{query}",
+            url,
             headers={"User-Agent": "azure-language-pipeline-benchmark/1.0"},
         )
         try:
-            with urlopen(request, timeout=10) as response:
-                payload = json.load(response)
+            with urlopen(request, timeout=self._timeout) as response:
+                return json.load(response)
         except (OSError, ValueError) as error:
-            raise RuntimeError(
+            raise PricingUnavailableError(
                 f"Unable to load official Microsoft retail pricing: {error}"
             ) from error
-        return parse_retail_rates(payload["Items"], self._region)
