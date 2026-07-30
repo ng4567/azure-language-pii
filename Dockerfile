@@ -20,7 +20,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 RUN groupadd --gid 10001 app \
     && useradd --uid 10001 --gid app --no-create-home --shell /usr/sbin/nologin app
 
-COPY --chown=app:app main.py azure_language.py benchmark.py pricing.py ./
+COPY --chown=app:app main.py azure_language.py benchmark.py pricing.py tradeoff.py ./
 COPY --chown=app:app samples ./samples
 COPY --chown=app:app static ./static
 
