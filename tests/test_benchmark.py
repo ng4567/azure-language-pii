@@ -2,7 +2,7 @@ import threading
 import unittest
 from pathlib import Path
 
-from benchmark import BenchmarkService, PiiResult, text_records
+from benchmark import BenchmarkService, PiiEntity, PiiResult, text_records
 
 
 class TextRecordTests(unittest.TestCase):
@@ -35,7 +35,11 @@ class BenchmarkServiceTests(unittest.TestCase):
 
         def detect(text):
             calls.append(("pii", text))
-            return PiiResult("Customer ***** requested help.", ("Person",))
+            return PiiResult(
+                "Customer ***** requested help.",
+                ("Person",),
+                (PiiEntity("Person", 9, 5, 0.99),),
+            )
 
         def summarize(text):
             calls.append(("summary", text))
@@ -53,6 +57,8 @@ class BenchmarkServiceTests(unittest.TestCase):
             ],
         )
         self.assertEqual(result.summary, "A customer requested help.")
+        self.assertEqual(result.original_text, "Customer Alice requested help.")
+        self.assertEqual(result.pii_entities[0].offset, 9)
         self.assertTrue(result.has_pii)
         self.assertFalse(result.discarded_speculative_summary)
 
@@ -61,7 +67,7 @@ class BenchmarkServiceTests(unittest.TestCase):
 
         def detect(text):
             barrier.wait(timeout=1)
-            return PiiResult(text, ())
+            return PiiResult(text, (), ())
 
         def summarize(text):
             barrier.wait(timeout=1)
@@ -78,7 +84,11 @@ class BenchmarkServiceTests(unittest.TestCase):
         summaries = []
 
         def detect(text):
-            return PiiResult("Contact ***** for help.", ("Person",))
+            return PiiResult(
+                "Contact ***** for help.",
+                ("Person",),
+                (PiiEntity("Person", 8, 5, 0.99),),
+            )
 
         def summarize(text):
             summaries.append(text)
@@ -95,6 +105,8 @@ class BenchmarkServiceTests(unittest.TestCase):
             ["Contact Alice for help.", "Contact ***** for help."],
         )
         self.assertEqual(result.summary, "Safe redacted summary")
+        self.assertEqual(result.original_text, "Contact Alice for help.")
+        self.assertEqual(result.pii_entities[0].length, 5)
         self.assertNotIn("Alice", result.summary)
         self.assertTrue(result.discarded_speculative_summary)
         self.assertEqual(

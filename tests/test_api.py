@@ -10,7 +10,7 @@ warnings.filterwarnings(
 )
 from fastapi.testclient import TestClient
 
-from benchmark import PiiResult
+from benchmark import PiiEntity, PiiResult
 from main import create_app
 from pricing import parse_retail_rates
 
@@ -18,8 +18,18 @@ from pricing import parse_retail_rates
 class FakeLanguageService:
     def detect_pii(self, text):
         if "Alice" in text:
-            return PiiResult(text.replace("Alice", "*****"), ("Person",))
-        return PiiResult(text, ())
+            return PiiResult(
+                text.replace("Alice", "*****"),
+                ("Person",),
+                (PiiEntity("Person", text.index("Alice"), 5, 0.99),),
+            )
+        if "Maya Chen" in text:
+            return PiiResult(
+                text.replace("Maya Chen", "*********"),
+                ("Person",),
+                (PiiEntity("Person", text.index("Maya Chen"), 9, 0.99),),
+            )
+        return PiiResult(text, (), ())
 
     def summarize(self, text):
         return f"Summary of {text}"
@@ -82,6 +92,11 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         payload = response.json()
         self.assertNotIn("Alice", payload["parallel"]["summary"])
+        self.assertEqual(
+            payload["parallel"]["original_text"],
+            "Contact Alice for support.",
+        )
+        self.assertEqual(payload["parallel"]["pii_entities"][0]["offset"], 8)
         self.assertTrue(payload["parallel"]["discarded_speculative_summary"])
         self.assertEqual(payload["parallel"]["cost"]["summary_records"], 2)
         self.assertGreater(payload["sequential"]["total_ms"], 0)
@@ -93,6 +108,34 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["region"], "eastus2")
         self.assertIn("prices.azure.com", response.json()["retail_api_url"])
+
+    def test_sample_suite_returns_four_results_for_equal_size_inputs(self):
+        response = self.client.post("/api/benchmark/samples")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["characters_per_sample"], 581)
+        self.assertEqual(
+            set(payload["datasets"]),
+            {"pii", "no_pii"},
+        )
+        self.assertEqual(
+            set(payload["datasets"]["pii"]["pipelines"]),
+            {"sequential", "parallel"},
+        )
+        self.assertEqual(
+            set(payload["datasets"]["no_pii"]["pipelines"]),
+            {"sequential", "parallel"},
+        )
+        self.assertTrue(payload["datasets"]["pii"]["has_pii"])
+        self.assertFalse(payload["datasets"]["no_pii"]["has_pii"])
+        self.assertIn("Maya Chen", payload["datasets"]["pii"]["original_text"])
+        self.assertEqual(
+            payload["datasets"]["pii"]["pii_entities"][0]["category"],
+            "Person",
+        )
+        self.assertEqual(payload["aggregate"]["pipeline_runs"], 4)
+        self.assertGreater(payload["aggregate"]["total_cost_usd"], 0)
 
 
 if __name__ == "__main__":

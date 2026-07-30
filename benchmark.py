@@ -8,9 +8,18 @@ from typing import Callable
 
 
 @dataclass(frozen=True)
+class PiiEntity:
+    category: str
+    offset: int
+    length: int
+    confidence_score: float
+
+
+@dataclass(frozen=True)
 class PiiResult:
     redacted_text: str
     categories: tuple[str, ...]
+    entities: tuple[PiiEntity, ...]
 
     @property
     def has_pii(self) -> bool:
@@ -28,8 +37,10 @@ class OperationTiming:
 class PipelineResult:
     mode: str
     total_ms: float
+    original_text: str
     has_pii: bool
     pii_categories: tuple[str, ...]
+    pii_entities: tuple[PiiEntity, ...]
     redacted_text: str
     summary: str
     operations: tuple[OperationTiming, ...]
@@ -73,8 +84,10 @@ class BenchmarkService:
         return PipelineResult(
             mode="sequential",
             total_ms=(time.perf_counter() - started) * 1000,
+            original_text=text,
             has_pii=pii_result.has_pii,
             pii_categories=pii_result.categories,
+            pii_entities=pii_result.entities,
             redacted_text=pii_result.redacted_text,
             summary=summary,
             operations=(pii_timing, summary_timing),
@@ -116,8 +129,10 @@ class BenchmarkService:
         return PipelineResult(
             mode="parallel",
             total_ms=(time.perf_counter() - started) * 1000,
+            original_text=text,
             has_pii=pii_result.has_pii,
             pii_categories=pii_result.categories,
+            pii_entities=pii_result.entities,
             redacted_text=pii_result.redacted_text,
             summary=summary,
             operations=tuple(timings),

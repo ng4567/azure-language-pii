@@ -5,7 +5,7 @@ import os
 from azure.ai.textanalytics import ExtractiveSummaryAction, TextAnalyticsClient
 from azure.identity import DefaultAzureCredential
 
-from benchmark import PiiResult
+from benchmark import PiiEntity, PiiResult
 
 
 class AzureLanguageService:
@@ -33,13 +33,26 @@ class AzureLanguageService:
         )
 
     def detect_pii(self, text: str) -> PiiResult:
-        result = self._pii_client.recognize_pii_entities([text])[0]
+        result = self._pii_client.recognize_pii_entities(
+            [text],
+            string_index_type="UnicodeCodePoint",
+        )[0]
         if result.is_error:
             raise RuntimeError(f"PII detection failed: {result.message}")
         categories = tuple(sorted({entity.category for entity in result.entities}))
+        entities = tuple(
+            PiiEntity(
+                category=entity.category,
+                offset=entity.offset,
+                length=entity.length,
+                confidence_score=entity.confidence_score,
+            )
+            for entity in result.entities
+        )
         return PiiResult(
             redacted_text=result.redacted_text,
             categories=categories,
+            entities=entities,
         )
 
     def summarize(self, text: str) -> str:

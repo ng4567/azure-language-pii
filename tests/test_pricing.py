@@ -34,8 +34,10 @@ class PricingTests(unittest.TestCase):
         result = PipelineResult(
             mode="parallel",
             total_ms=30,
+            original_text="Alice",
             has_pii=True,
             pii_categories=("Person",),
+            pii_entities=(),
             redacted_text="*",
             summary="Safe",
             operations=(

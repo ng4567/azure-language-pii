@@ -3,114 +3,106 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Compare sequential and speculative parallel Azure AI Language privacy pipelines.">
   <title>PII Pipeline Lab</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%2313251d'/%3E%3Cpath d='M18 16h17c9 0 15 5 15 13S44 42 35 42h-7v8H18V16zm10 9v8h7c3 0 5-1 5-4s-2-4-5-4h-7z' fill='%23c9f56f'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="/static/styles.css">
 </head>
 <body>
   <main>
     <header class="hero">
-      <div>
+      <div class="hero-copy">
         <p class="eyebrow">Azure AI Language · Performance Lab</p>
-        <h1>Privacy pipeline,<br><span>measured.</span></h1>
-        <p class="lede">Compare redact-first processing with speculative parallel execution—using the same text, the same Azure resource, and official Microsoft retail pricing.</p>
+        <h1>Privacy pipelines,<br><span>measured side by side.</span></h1>
+        <p class="lede">Run PII and no-PII inputs through sequential and speculative-parallel processing. Compare four results, one matched workload, and official Microsoft retail estimates.</p>
       </div>
-      <div class="hero-badge">
-        <span class="pulse"></span>
-        <div><strong>Entra authenticated</strong><small>No API keys in the browser</small></div>
+      <div class="trust-card">
+        <span class="pulse" aria-hidden="true"></span>
+        <div>
+          <strong>Server-side Entra authentication</strong>
+          <small>No API keys or detected values are logged</small>
+        </div>
       </div>
     </header>
 
-    <section class="panel input-panel">
+    <section class="panel launch-panel">
       <div class="section-heading">
         <div>
-          <p class="step">01 · INPUT</p>
-          <h2>Choose your test payload</h2>
+          <p class="step">01 · TEST CONFIGURATION</p>
+          <h2>Choose the workload</h2>
         </div>
+        <div class="mode-switch" role="group" aria-label="Benchmark mode">
+          <button class="mode-button active" data-mode="suite">Matched sample suite</button>
+          <button class="mode-button" data-mode="custom">Custom text</button>
+        </div>
+      </div>
+
+      <div id="suite-config" class="suite-config">
+        <div class="sample-pair">
+          <article class="sample-card pii-sample">
+            <div class="sample-title">
+              <span class="sample-index">A</span>
+              <div><strong>PII.txt</strong><small id="pii-count">Loading…</small></div>
+            </div>
+            <p id="pii-preview">Loading the synthetic PII sample…</p>
+            <span class="sample-tag risk">Expected: PII detected</span>
+          </article>
+          <div class="equal-marker" aria-label="Equal character counts">
+            <span>=</span>
+            <small>matched<br>length</small>
+          </div>
+          <article class="sample-card safe-sample">
+            <div class="sample-title">
+              <span class="sample-index">B</span>
+              <div><strong>No PII.txt</strong><small id="no-pii-count">Loading…</small></div>
+            </div>
+            <p id="no-pii-preview">Loading the synthetic no-PII sample…</p>
+            <span class="sample-tag safe">Expected: no PII</span>
+          </article>
+        </div>
+      </div>
+
+      <div id="custom-config" class="custom-config hidden">
+        <label for="input-text">Text sent to both pipeline strategies</label>
+        <textarea id="input-text" maxlength="5000" spellcheck="true" placeholder="Paste up to 5,000 characters…"></textarea>
         <span id="character-count" class="character-count">0 / 5,000 characters</span>
       </div>
-      <div class="source-tabs" role="group" aria-label="Input source">
-        <button class="source-tab active" data-source="pii">PII.txt</button>
-        <button class="source-tab" data-source="no_pii">No PII.txt</button>
-        <button class="source-tab" data-source="custom">Custom text</button>
-      </div>
-      <textarea id="input-text" maxlength="5000" aria-label="Benchmark text" spellcheck="true"></textarea>
-      <div class="input-footer">
-        <p id="sample-note">Synthetic sample · equal character count</p>
+
+      <div class="launch-footer">
+        <p id="run-note">One click runs 2 datasets × 2 pipeline strategies.</p>
         <button id="run-button" class="run-button">
-          <span>Run comparison</span>
-          <span class="arrow">→</span>
+          <span id="run-label">Run all four comparisons</span>
+          <span class="arrow" aria-hidden="true">→</span>
         </button>
       </div>
     </section>
 
-    <section class="privacy-note">
-      <strong>How speculative parallel works</strong>
-      <p>PII detection and summarization start together. If PII is found, the first summary is discarded and the redacted input is summarized again. Unsafe speculative summaries are never returned or rendered.</p>
+    <section class="method-strip">
+      <article>
+        <span>Sequential</span>
+        <strong>PII detect → redact → summarize</strong>
+        <p>Always waits for privacy classification before summarization begins.</p>
+      </article>
+      <div class="method-divider" aria-hidden="true"></div>
+      <article>
+        <span>Speculative parallel</span>
+        <strong>PII detect ∥ summarize → conditional retry</strong>
+        <p>If PII is found, the speculative summary is discarded and never returned.</p>
+      </article>
     </section>
 
     <section id="status" class="status" aria-live="polite"></section>
 
-    <section id="results" class="results hidden">
+    <section id="results" class="results hidden" aria-live="polite">
       <div class="section-heading results-heading">
         <div>
-          <p class="step">02 · RESULTS</p>
+          <p class="step">02 · MEASURED RESULTS</p>
           <h2>Price meets performance</h2>
         </div>
-        <div id="speedup-badge" class="speedup-badge"></div>
+        <span id="result-context" class="result-context"></span>
       </div>
-
-      <div class="comparison-grid">
-        <article class="result-card sequential">
-          <div class="card-label"><span>A</span> Sequential</div>
-          <p class="pipeline-flow">PII → redact → summarize</p>
-          <div class="metric"><strong id="sequential-latency">—</strong><span>total latency</span></div>
-          <div class="bar-track"><div id="sequential-bar" class="bar"></div></div>
-          <div class="card-stats">
-            <div><span>Est. retail cost</span><strong id="sequential-cost">—</strong></div>
-            <div><span>Azure calls</span><strong id="sequential-calls">—</strong></div>
-            <div><span>Text records</span><strong id="sequential-records">—</strong></div>
-          </div>
-        </article>
-
-        <article class="result-card parallel">
-          <div class="card-label"><span>B</span> Speculative parallel</div>
-          <p class="pipeline-flow">PII ∥ summarize → conditional retry</p>
-          <div class="metric"><strong id="parallel-latency">—</strong><span>total latency</span></div>
-          <div class="bar-track"><div id="parallel-bar" class="bar"></div></div>
-          <div class="card-stats">
-            <div><span>Est. retail cost</span><strong id="parallel-cost">—</strong></div>
-            <div><span>Azure calls</span><strong id="parallel-calls">—</strong></div>
-            <div><span>Text records</span><strong id="parallel-records">—</strong></div>
-          </div>
-        </article>
-      </div>
-
-      <div class="detail-grid">
-        <article class="panel detail-panel">
-          <p class="step">OPERATION TIMELINE</p>
-          <div id="timing-table"></div>
-        </article>
-        <article class="panel detail-panel">
-          <p class="step">PRIVACY OUTCOME</p>
-          <div id="privacy-outcome"></div>
-        </article>
-      </div>
-
-      <div class="summary-grid">
-        <article class="panel summary-panel">
-          <p class="step">SEQUENTIAL SUMMARY</p>
-          <p id="sequential-summary"></p>
-        </article>
-        <article class="panel summary-panel">
-          <p class="step">PARALLEL SUMMARY</p>
-          <p id="parallel-summary"></p>
-        </article>
-      </div>
-
-      <article id="redacted-panel" class="panel redacted-panel">
-        <p class="step">REDACTED INPUT</p>
-        <p id="redacted-text"></p>
-      </article>
+      <div id="aggregate-metrics" class="aggregate-metrics"></div>
+      <div id="dataset-results" class="dataset-results"></div>
     </section>
 
     <footer>

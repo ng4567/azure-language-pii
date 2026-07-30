@@ -48,13 +48,26 @@ uv run uvicorn main:app --reload
 
 Open [http://127.0.0.1:8000](http://127.0.0.1:8000).
 
-The UI provides custom input and two synthetic fixtures:
+The UI provides custom input and a one-click matched sample suite:
 
 - `samples/PII.txt`
 - `samples/No PII.txt`
 
 The fixtures have exactly the same character count for an equivalent payload
-comparison.
+comparison. The suite runs both fixtures through both strategies and displays
+all four latency and retail-cost results together.
+
+Detected PII is highlighted over the original input using the character offsets
+returned by Azure AI Language. Redacted text remains the internal input to safe
+summarization, but the dashboard deliberately shows the annotated original so
+the detection behavior is visible. The backend requests `UnicodeCodePoint`
+offsets and returns no entity values beyond the original text supplied by the
+user.
+
+The API exposes:
+
+- `POST /api/benchmark` for one custom input
+- `POST /api/benchmark/samples` for the matched four-way sample suite
 
 ## Run in Docker
 

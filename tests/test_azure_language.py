@@ -5,14 +5,25 @@ from azure_language import AzureLanguageService
 
 
 class FakePiiClient:
-    def recognize_pii_entities(self, documents):
+    def recognize_pii_entities(self, documents, *, string_index_type):
+        assert string_index_type == "UnicodeCodePoint"
         return [
             SimpleNamespace(
                 is_error=False,
                 redacted_text="Contact *****.",
                 entities=[
-                    SimpleNamespace(category="Person"),
-                    SimpleNamespace(category="Person"),
+                    SimpleNamespace(
+                        category="Person",
+                        offset=8,
+                        length=5,
+                        confidence_score=0.99,
+                    ),
+                    SimpleNamespace(
+                        category="Person",
+                        offset=8,
+                        length=5,
+                        confidence_score=0.99,
+                    ),
                 ],
             )
         ]
@@ -38,7 +49,10 @@ class AzureLanguageServiceTests(unittest.TestCase):
 
         self.assertEqual(result.redacted_text, "Contact *****.")
         self.assertEqual(result.categories, ("Person",))
-        self.assertFalse(hasattr(result, "entities"))
+        self.assertEqual(result.entities[0].offset, 8)
+        self.assertEqual(result.entities[0].length, 5)
+        self.assertEqual(result.entities[0].category, "Person")
+        self.assertFalse(hasattr(result.entities[0], "text"))
 
     def test_summarize_combines_extractive_sentences(self):
         service = AzureLanguageService(FakePiiClient(), FakeSummaryClient())
