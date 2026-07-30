@@ -1,0 +1,39 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "environmentName": {
+      "value": "language-pii-dev-27a7"
+    },
+    "location": {
+      "value": "eastus2"
+    },
+    "sessionId": {
+      "value": "27a70c7a-57ad-43aa-bb33-dffb880bffbf"
+    },
+    "deployedBy": {
+      "value": "MOD Administrator"
+    },
+    "createdAt": {
+      "value": "2026-07-30T22:17:28Z"
+    },
+    "resourceGroupName": {
+      "value": "finance-app-ng"
+    },
+    "containerAppName": {
+      "value": "ca-language-pii-dev-27a7"
+    },
+    "appInsightsName": {
+      "value": "appi-language-pii-dev-27a7"
+    },
+    "keyVaultName": {
+      "value": "kv-language-pii-dev-27a7"
+    },
+    "languageEndpoint": {
+      "value": "https://finance-app-resource.cognitiveservices.azure.com"
+    },
+    "languageResourceName": {
+      "value": "finance-app-resource"
+    }
+  }
+}
