@@ -1,0 +1,20 @@
+{
+  "id": "04-identity-verification",
+  "scenario": "Agent verifies identity before discussing the account: name, date of birth, SSN, address.",
+  "notes": "Highest-sensitivity categories outside PCI. Common opening sequence for any account-servicing call.",
+  "conversation": [
+    {"role": "Agent", "text": "Before I can pull up the account I'll need to verify a few details with you."},
+    {"role": "Customer", "text": "No problem. My name is Robert Alvarez and my date of birth is March 14, 1978."},
+    {"role": "Agent", "text": "Thank you. Can you confirm the last four of your social and the service address?"},
+    {"role": "Customer", "text": "The social is 555-42-8891 and the address is 742 Evergreen Terrace, Seattle, Washington 98101."},
+    {"role": "Agent", "text": "That all matches. How can I help you today, Mr. Alvarez?"},
+    {"role": "Customer", "text": "My internet has been dropping every evening for about a week."}
+  ],
+  "expected": [
+    {"turn": 2, "text": "Robert Alvarez", "category": "Person"},
+    {"turn": 2, "text": "March 14, 1978", "category": "DateOfBirth"},
+    {"turn": 4, "text": "555-42-8891", "category": "USSocialSecurityNumber"},
+    {"turn": 4, "text": "742 Evergreen Terrace, Seattle, Washington 98101", "category": "Address"},
+    {"turn": 5, "text": "Alvarez", "category": "Person"}
+  ]
+}

@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>API · PII Pipeline Lab</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <main>
+    <header class="hero">
+      <div>
+        <p class="eyebrow">Azure AI Language · HTTP API</p>
+        <h1>Use it without<br><span>the dashboard.</span></h1>
+        <p class="lede">Every operation the dashboard performs is a plain JSON endpoint. Point your own scripts, notebooks, or test harness at the container and skip the UI entirely.</p>
+      </div>
+      <div class="hero-badge">
+        <span class="pulse"></span>
+        <div><strong>No API key</strong><small>Azure auth stays server-side</small></div>
+      </div>
+    </header>
+
+    <nav class="page-nav">
+      <a href="/">← Back to dashboard</a>
+      <a href="/docs" target="_blank" rel="noreferrer">Swagger UI ↗</a>
+      <a href="/redoc" target="_blank" rel="noreferrer">ReDoc ↗</a>
+      <a href="/openapi.json" target="_blank" rel="noreferrer">openapi.json ↗</a>
+    </nav>
+
+    <section class="panel">
+      <p class="step">START HERE</p>
+      <h2>The 30-second version</h2>
+      <p class="projection-lede">Send a transcript as an array of turns. Get back the redacted transcript, the spans that were found, and a summary. This call is the one most people want:</p>
+      <pre class="code"><code>curl -X POST http://localhost:8000/api/redact \
+  -H "Content-Type: application/json" \
+  -d '{
+    "conversation": [
+      {"role": "Agent",    "text": "Who am I speaking with?"},
+      {"role": "Customer", "text": "Maya Chen, my card is 4111 1111 1111 1111."}
+    ]
+  }'</code></pre>
+      <pre class="code"><code>{
+  "has_pii": true,
+  "categories": ["CreditCard", "Person"],
+  "redacted_conversation": [
+    {"role": "Agent",    "text": "Who am I speaking with?"},
+    {"role": "Customer", "text": "*********, my card is *******************."}
+  ],
+  "redacted_text": "Agent: Who am I speaking with?\nCustomer: *********, my card is …",
+  "entities": [
+    {"turn": 2, "category": "Person", "offset": 0, "length": 9, "confidence_score": 1.0}
+  ],
+  "characters": 71,
+  "text_records": 1,
+  "duration_ms": 2411.8
+}</code></pre>
+    </section>
+
+    <section class="panel">
+      <p class="step">REFERENCE</p>
+      <h2>Endpoints</h2>
+      <div class="table-scroll">
+        <table class="api-table">
+          <thead><tr><th>Method &amp; path</th><th>What it does</th><th>Azure calls</th></tr></thead>
+          <tbody>
+            <tr><td><code>POST /api/redact</code></td><td>Redact PII from a transcript, and report every detected span</td><td>1</td></tr>
+            <tr><td><code>POST /api/summarize</code></td><td>Summarize a transcript (issue + resolution aspects)</td><td>1</td></tr>
+            <tr><td><code>POST /api/pipeline</code></td><td>Redact and summarize together, sequential or speculative-parallel</td><td>2–3</td></tr>
+            <tr><td><code>POST /api/benchmark</code></td><td>Run both pipelines N times and compare latency and cost</td><td>many</td></tr>
+            <tr><td><code>GET /api/config</code></td><td>Input limits and allowed roles</td><td>0</td></tr>
+            <tr><td><code>GET /api/samples</code></td><td>The two bundled fixture transcripts</td><td>0</td></tr>
+            <tr><td><code>GET /api/pricing</code></td><td>Current regional retail meters</td><td>0</td></tr>
+            <tr><td><code>GET /healthz</code></td><td>Liveness probe</td><td>0</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="footnote">Every <code>POST</code> takes the same <code>conversation</code> array. <code>role</code> must be <code>"Agent"</code> or <code>"Customer"</code>.</p>
+    </section>
+
+    <section class="panel">
+      <p class="step">EXAMPLES</p>
+      <h2>From your language of choice</h2>
+
+      <h3>Python</h3>
+      <pre class="code"><code>import httpx
+
+transcript = [
+    {"role": "Agent",    "text": "Thanks for calling, who am I speaking with?"},
+    {"role": "Customer", "text": "Maya Chen. My number is 206-555-0148."},
+]
+
+# Redact only
+redacted = httpx.post(
+    "http://localhost:8000/api/redact",
+    json={"conversation": transcript},
+    timeout=120,
+).raise_for_status().json()
+
+print(redacted["categories"])       # ['Person', 'Phone']
+print(redacted["redacted_text"])
+
+# Redact, then summarize the redacted transcript, in one call
+result = httpx.post(
+    "http://localhost:8000/api/pipeline",
+    json={"conversation": transcript, "mode": "sequential"},
+    timeout=300,
+).raise_for_status().json()
+
+print(result["summary"])</code></pre>
+
+      <h3>JavaScript</h3>
+      <pre class="code"><code>const response = await fetch("http://localhost:8000/api/pipeline", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({
+    conversation: [
+      { role: "Agent", text: "Who am I speaking with?" },
+      { role: "Customer", text: "Maya Chen, card 4111 1111 1111 1111." },
+    ],
+    mode: "sequential",
+  }),
+});
+if (!response.ok) throw new Error((await response.json()).detail);
+const { summary, redacted_text, has_pii } = await response.json();</code></pre>
+      <p class="footnote">Calling from a browser on another origin needs CORS. Set <code>CORS_ALLOW_ORIGINS=https://your-app.example.com</code> (comma-separated) on the container; it is off by default, so same-origin and server-side callers work unchanged.</p>
+
+      <h3>Batch a folder of transcripts</h3>
+      <pre class="code"><code>for f in transcripts/*.json; do
+  curl -s -X POST http://localhost:8000/api/redact \
+    -H "Content-Type: application/json" \
+    -d "{\"conversation\": $(cat "$f")}" \
+    | jq '{file: "'"$f"'", categories, leaked: .has_pii}'
+done</code></pre>
+    </section>
+
+    <section class="panel">
+      <p class="step">CHOOSING</p>
+      <h2>Which endpoint do I want?</h2>
+      <div class="projection-grid">
+        <div><span>Storing transcripts safely</span><strong><code>/api/redact</code></strong></div>
+        <div><span>Summarizing already-clean text</span><strong><code>/api/summarize</code></strong></div>
+        <div><span>Both, in production shape</span><strong><code>/api/pipeline</code></strong></div>
+      </div>
+      <p class="projection-lede"><strong><code>mode</code> on <code>/api/pipeline</code> matters.</strong> <code>sequential</code> redacts first and summarizes only the redacted transcript, so un-redacted text never reaches the summarizer. <code>parallel</code> starts both at once and re-summarizes only when PII is found — faster on clean transcripts, but it does send un-redacted text to the summarization endpoint on every request. Use <code>sequential</code> unless you have measured that the latency matters and accepted that trade-off.</p>
+    </section>
+
+    <section class="panel">
+      <p class="step">CONSTRAINTS</p>
+      <h2>Limits and failure modes</h2>
+      <ul class="plain-list">
+        <li><strong>1,000 characters per turn.</strong> Enforced by Azure, counted in UTF-16 code units. Longer turns must be split before sending.</li>
+        <li><strong>5,000 characters per transcript.</strong> This app's own cap; <code>GET /api/config</code> returns the live values.</li>
+        <li><strong>Both skills are asynchronous jobs.</strong> Expect roughly 2–3 seconds per Azure call, so <code>/api/pipeline</code> takes 5 seconds or more. Set generous client timeouts.</li>
+        <li><strong>Errors are JSON.</strong> <code>400</code> for a transcript that breaks the rules, <code>422</code> for a malformed body, <code>502</code> when Azure itself fails. The reason is always in <code>detail</code>.</li>
+        <li><strong>Entity spans never include the matched text.</strong> Only category, offset, length, and confidence — the value is PII, and you already hold the input it came from.</li>
+      </ul>
+      <p class="footnote">There is no authentication in front of these endpoints. Azure credentials stay server-side, but anyone who can reach the container can submit transcripts to it — put it behind your own network controls before exposing it beyond localhost.</p>
+    </section>
+
+    <footer>
+      <div>
+        <strong>Evaluating redaction quality?</strong>
+        <p><code>evaluation/evaluate.py</code> in the repository scores these endpoints against hand-labelled transcripts and reports recall, false positives, and whether any labelled value survived redaction.</p>
+      </div>
+      <div class="source-links">
+        <a href="/" >Back to the dashboard</a>
+        <a href="/docs" target="_blank" rel="noreferrer">Interactive Swagger UI ↗</a>
+      </div>
+    </footer>
+  </main>
+</body>
+</html>
