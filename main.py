@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import json
 import os
 from contextlib import asynccontextmanager
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from azure.core.exceptions import AzureError
 from dotenv import load_dotenv
@@ -21,31 +23,45 @@ from benchmark import (
     PipelineResult,
     billable_characters,
 )
+from conversation import MAX_TURN_LENGTH, ROLES, Conversation, Turn
 from pricing import PricingUnavailableError, RetailPricing, estimate_pipeline_cost
 
 ROOT = Path(__file__).parent
 MAX_TEXT_LENGTH = 5_000
 
+WARM_UP_CONVERSATION = Conversation(
+    (
+        Turn("Agent", "Warm up the client pipeline before any timed measurement."),
+        Turn("Customer", "Understood, nothing here needs to be timed."),
+    )
+)
+
+
+class TurnModel(BaseModel):
+    role: Literal["Agent", "Customer"]
+    text: str
+
 
 class BenchmarkRequest(BaseModel):
-    text: str
+    conversation: list[TurnModel]
     iterations: int = Field(default=DEFAULT_ITERATIONS, ge=1, le=MAX_ITERATIONS)
     warm_up: bool = True
 
 
 @lru_cache(maxsize=1)
-def _load_samples() -> dict[str, dict[str, str | int]]:
+def _load_samples() -> dict[str, dict[str, object]]:
     samples = {}
     for key, filename, label in (
-        ("pii", "PII.txt", "PII sample"),
-        ("no_pii", "No PII.txt", "No-PII sample"),
+        ("pii", "PII.json", "PII transcript"),
+        ("no_pii", "No PII.json", "No-PII transcript"),
     ):
-        content = (ROOT / "samples" / filename).read_text(encoding="utf-8").strip()
+        turns = json.loads((ROOT / "samples" / filename).read_text(encoding="utf-8"))
+        conv = Conversation.from_dicts(turns)
         samples[key] = {
             "label": label,
             "filename": filename,
-            "content": content,
-            "characters": billable_characters(content),
+            "conversation": conv.to_dict(),
+            "characters": conv.billable_characters(),
         }
     return samples
 
@@ -55,6 +71,37 @@ def _serialize_result(result: PipelineResult, rates) -> dict[str, object]:
         **result.to_dict(),
         "cost": estimate_pipeline_cost(result, rates).to_dict(),
     }
+
+
+def _validated_conversation(request: BenchmarkRequest) -> Conversation:
+    turns = []
+    for index, turn in enumerate(request.conversation, start=1):
+        text = turn.text.strip()
+        if not text:
+            raise HTTPException(
+                status_code=400, detail=f"Turn {index} has no text."
+            )
+        # Measured the way Azure measures it, so astral characters cannot slip
+        # a turn past this guard and into a service-side job rejection.
+        if billable_characters(text) > MAX_TURN_LENGTH:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Turn {index} exceeds {MAX_TURN_LENGTH:,} characters; the "
+                    "conversation API enforces this per turn."
+                ),
+            )
+        turns.append(Turn(role=turn.role, text=text))
+    if not turns:
+        raise HTTPException(status_code=400, detail="At least one turn is required.")
+
+    conv = Conversation(tuple(turns))
+    if conv.billable_characters() > MAX_TEXT_LENGTH:
+        raise HTTPException(
+            status_code=400,
+            detail=f"The transcript must be {MAX_TEXT_LENGTH:,} characters or fewer.",
+        )
+    return conv
 
 
 def create_app(language_service=None, pricing_service=None) -> FastAPI:
@@ -75,8 +122,8 @@ def create_app(language_service=None, pricing_service=None) -> FastAPI:
                 application.state.language.close()
 
     application = FastAPI(
-        title="Azure PII and Summarization Benchmark",
-        version="2.0.0",
+        title="Azure Conversation PII and Summarization Benchmark",
+        version="3.0.0",
         lifespan=lifespan,
     )
     if language_service is not None:
@@ -101,6 +148,8 @@ def create_app(language_service=None, pricing_service=None) -> FastAPI:
     def config():
         return {
             "max_text_length": MAX_TEXT_LENGTH,
+            "max_turn_length": MAX_TURN_LENGTH,
+            "roles": list(ROLES),
             "default_iterations": DEFAULT_ITERATIONS,
             "max_iterations": MAX_ITERATIONS,
         }
@@ -118,17 +167,7 @@ def create_app(language_service=None, pricing_service=None) -> FastAPI:
 
     @application.post("/api/benchmark")
     def benchmark(request: BenchmarkRequest):
-        text = request.text.strip()
-        if not text:
-            raise HTTPException(status_code=400, detail="Text is required.")
-        # Measured the way Azure measures it, so astral characters cannot slip
-        # a document past this guard and into a service-side length rejection.
-        characters = billable_characters(text)
-        if characters > MAX_TEXT_LENGTH:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Text must be {MAX_TEXT_LENGTH:,} characters or fewer.",
-            )
+        conv = _validated_conversation(request)
 
         try:
             rates = application.state.pricing.get_rates()
@@ -139,11 +178,12 @@ def create_app(language_service=None, pricing_service=None) -> FastAPI:
             application.state.language.detect_pii,
             application.state.language.summarize,
             iterations=request.iterations,
+            warm_up_payload=WARM_UP_CONVERSATION,
         )
         # AzureError also covers the transport failures (ServiceRequestError,
         # ServiceResponseError) that HttpResponseError does not.
         try:
-            comparison = service.compare(text, warm_up=request.warm_up)
+            comparison = service.compare(conv, warm_up=request.warm_up)
         except (AzureError, RuntimeError) as error:
             raise HTTPException(
                 status_code=502,
@@ -156,7 +196,8 @@ def create_app(language_service=None, pricing_service=None) -> FastAPI:
             sequential.total_ms / parallel.total_ms if parallel.total_ms > 0 else 0
         )
         return {
-            "characters": characters,
+            "characters": conv.billable_characters(),
+            "turns": len(conv.turns),
             "iterations": comparison.iterations,
             "warm_up": request.warm_up,
             "speedup": speedup,

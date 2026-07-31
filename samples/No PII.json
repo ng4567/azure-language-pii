@@ -1,0 +1,8 @@
+[
+  {"role": "Agent", "text": "Thank you for calling billing support. How can I help you with the account today?"},
+  {"role": "Customer", "text": "Hello, my monthly statement never arrived and I want to review the delivery settings for the account."},
+  {"role": "Agent", "text": "I can help with that. Let me review the notification preferences and the document delivery workflow."},
+  {"role": "Customer", "text": "The secure portal shows nothing new, and the archive does not contain the expected document either."},
+  {"role": "Agent", "text": "Thanks. I see paperless delivery was disabled, which is why the statement did not arrive. I have re-enabled it."},
+  {"role": "Customer", "text": "Great. Please post a recap of the troubleshooting steps and the expected follow-up to the secure portal."}
+]

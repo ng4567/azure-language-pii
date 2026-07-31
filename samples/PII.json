@@ -1,0 +1,8 @@
+[
+  {"role": "Agent", "text": "Thank you for calling billing support. Who am I speaking with today?"},
+  {"role": "Customer", "text": "Hi, this is Maya Chen. My monthly statement never arrived and I want to check the card you have on file."},
+  {"role": "Agent", "text": "I can help with that. Could you confirm the phone number and the email address listed on the account?"},
+  {"role": "Customer", "text": "My number is 206-555-0148, my email is maya.chen@example.com, and the card I pay with is 4111 1111 1111 1111."},
+  {"role": "Agent", "text": "Thanks. I see paperless delivery was disabled, which is why the statement did not arrive. I have re-enabled it."},
+  {"role": "Customer", "text": "Great. Please send a recap of the troubleshooting steps and the expected follow-up to my email address."}
+]
