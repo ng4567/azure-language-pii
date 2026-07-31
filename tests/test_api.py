@@ -93,6 +93,13 @@ class ApiTests(unittest.TestCase):
                 self.assertIn(turn["role"], ("Agent", "Customer"))
                 self.assertTrue(turn["text"])
 
+    def test_static_pages_are_served(self):
+        for path in ("/", "/api-docs", "/analysis"):
+            with self.subTest(path=path):
+                response = self.client.get(path)
+                self.assertEqual(response.status_code, 200)
+                self.assertIn("text/html", response.headers["content-type"])
+
     def test_health_check_does_not_call_azure(self):
         response = self.client.get("/healthz")
 

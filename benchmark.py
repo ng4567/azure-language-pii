@@ -107,9 +107,18 @@ class PipelineResult:
 
 @dataclass(frozen=True)
 class ComparisonResult:
+    """Aggregates plus the raw per-iteration runs behind them.
+
+    The projection needs the un-aggregated outcomes: deriving its inputs from
+    the aggregates would mix medians of different quantities and can produce
+    combinations no single run ever exhibited.
+    """
+
     iterations: int
     sequential: PipelineResult
     parallel: PipelineResult
+    sequential_outcomes: tuple[PipelineOutcome, ...] = ()
+    parallel_outcomes: tuple[PipelineOutcome, ...] = ()
 
 
 def billable_characters(text: str) -> int:
@@ -272,6 +281,8 @@ class BenchmarkService:
             iterations=self._iterations,
             sequential=_aggregate("sequential", sequential),
             parallel=_aggregate("parallel", parallel),
+            sequential_outcomes=tuple(sequential),
+            parallel_outcomes=tuple(parallel),
         )
 
     def run_sequential(self, payload: object) -> PipelineOutcome:

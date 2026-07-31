@@ -167,6 +167,9 @@ Input limits: the conversation API enforces **1,000 characters per turn**
 
 ## API
 
+A findings page at `/analysis` presents the measured latency, cost, and
+redaction-quality results with a concrete architecture recommendation.
+
 The backend is usable on its own — nothing here needs the dashboard. Browsable
 docs are at `/api-docs`, interactive Swagger at `/docs`, and the schema at
 `/openapi.json`.

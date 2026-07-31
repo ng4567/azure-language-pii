@@ -192,6 +192,10 @@ def create_app(language_service=None, pricing_service=None) -> FastAPI:
     def api_docs():
         return FileResponse(ROOT / "static" / "api.html")
 
+    @application.get("/analysis", include_in_schema=False)
+    def analysis():
+        return FileResponse(ROOT / "static" / "analysis.html")
+
     @application.get("/healthz", include_in_schema=False)
     def health():
         return {"status": "ok"}
@@ -342,7 +346,7 @@ def create_app(language_service=None, pricing_service=None) -> FastAPI:
             "sequential": _serialize_result(sequential, rates),
             "parallel": _serialize_result(parallel, rates),
             "pricing": rates.to_dict(),
-            "projection": tradeoff.project(sequential, parallel, rates).to_dict(),
+            "projection": tradeoff.project(comparison, rates).to_dict(),
         }
 
     return application
