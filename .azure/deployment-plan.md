@@ -118,7 +118,7 @@ az deployment sub create \
 
 | Component | Azure Service | SKU / configuration |
 |-----------|---------------|---------------------|
-| FastAPI web application | Azure Container Apps | Existing Consumption environment; 0.5 vCPU, 1 GiB, min 0, max 3 |
+| FastAPI web application | Azure Container Apps | Existing Consumption environment; 0.5 vCPU, 1 GiB, min 1, max 3 |
 | Container image | Azure Container Registry | Existing Standard registry |
 | PII and summarization | Azure AI Language | Existing AIServices S0 account |
 | Telemetry | Application Insights | Workspace-based |
@@ -235,6 +235,7 @@ Quota evidence:
 | Role verification | Static Bicep review plus `az role definition list` for all three role IDs | Pass: scoped AcrPull, Cognitive Services User, and Key Vault Secrets Officer IDs verified | 2026-07-30T22:30:29Z |
 | Name availability | `az keyvault check-name --name kv-language-pii-dev-27a7` and resource lookups | Pass: Key Vault name available; Container App and Application Insights names unused | 2026-07-30T22:30:29Z |
 | Revision-routing update | Bicep lint/build, subscription validation, and what-if with the ACR image parameter | Pass: explicit single-revision mode validated | 2026-07-30T22:34:00Z |
+| Minimum replica update | Bicep lint/build, subscription validation, and what-if with the deployed ACR image | Pass: `minReplicas` changes from 0 to 1; no resource deletion | 2026-07-31T01:54:54Z |
 
 **Validated by:** azure-validate skill
 
@@ -268,8 +269,7 @@ Quota evidence:
 
 > Current: Deployed
 
-1. Open the public dashboard and run either the matched suite or custom-input benchmark.
-2. Rotate or remove the local demo service principal independently; the deployed app does not use it.
+1. Monitor the always-on replica and adjust `maxReplicas` if load testing requires additional capacity.
 
 ---
 
@@ -286,3 +286,5 @@ Quota evidence:
 - **Live pricing:** sequential `$0.006`; speculative parallel `$0.008` for both fixtures
 - **Browser:** dashboard and four-way result rendering passed; all observed API requests returned 200; no console errors
 - **RBAC:** `AcrPull` on `regngasdf` and `Cognitive Services User` on `finance-app-resource` verified for principal `fe146f16-95eb-41dc-8f94-1665b006f16c`
+- **Minimum replicas:** `1`, verified live after deployment `language-pii-min-replicas-1`
+- **Active revision:** `ca-language-pii-dev-27a7--0000002`, healthy, one replica, 100% traffic
