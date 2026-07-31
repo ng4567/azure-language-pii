@@ -313,3 +313,10 @@ footer p { max-width: 650px; margin: 8px 0 0; line-height: 1.5; }
 .api-table td.good, .good { color: var(--green); }
 .warn { color: var(--orange); }
 .projection-grid strong.good { color: var(--green); }
+
+.prevalence-callout { display: grid; grid-template-columns: auto 1fr; gap: 26px; align-items: center; margin: 22px 0 4px; padding: 22px 24px; border-radius: 14px; background: #faf8f1; border: 1px solid var(--line); }
+.prevalence-figure { text-align: center; }
+.prevalence-figure strong { display: block; font-family: Georgia, serif; font-size: 46px; font-weight: 500; letter-spacing: -.03em; color: var(--green); }
+.prevalence-figure span { display: block; max-width: 190px; margin-top: 6px; color: var(--muted); font-size: 12px; line-height: 1.45; }
+.prevalence-callout p { margin: 0; font-size: 14px; line-height: 1.65; }
+@media (max-width: 760px) { .prevalence-callout { grid-template-columns: 1fr; gap: 16px; } .prevalence-figure span { max-width: none; } }
