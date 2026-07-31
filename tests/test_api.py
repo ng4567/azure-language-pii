@@ -239,6 +239,99 @@ class ApiTests(unittest.TestCase):
         self.assertIn("retail feed is down", response.json()["detail"])
         self.assertNotIn("Azure benchmark failed", response.json()["detail"])
 
+    def test_redact_returns_spans_without_echoing_the_values(self):
+        response = self.client.post(
+            "/api/redact",
+            json={"conversation": _turns("Contact Alice for support.")},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["has_pii"])
+        self.assertEqual(payload["categories"], ["Person"])
+        self.assertNotIn("Alice", payload["redacted_text"])
+        self.assertEqual(payload["text_records"], 1)
+        for entity in payload["entities"]:
+            self.assertNotIn("text", entity)
+
+    def test_redact_reports_no_pii_without_changing_the_transcript(self):
+        response = self.client.post(
+            "/api/redact", json={"conversation": _turns("The modem is offline.")}
+        )
+
+        payload = response.json()
+        self.assertFalse(payload["has_pii"])
+        self.assertEqual(payload["categories"], [])
+        self.assertEqual(
+            payload["redacted_conversation"],
+            [{"role": "Customer", "text": "The modem is offline."}],
+        )
+
+    def test_summarize_returns_a_summary_for_the_text_it_was_given(self):
+        response = self.client.post(
+            "/api/summarize", json={"conversation": _turns("Contact Alice.")}
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Summary of", response.json()["summary"])
+
+    def test_pipeline_sequential_summarizes_only_redacted_text(self):
+        response = self.client.post(
+            "/api/pipeline",
+            json={"conversation": _turns("Contact Alice."), "mode": "sequential"},
+        )
+
+        payload = response.json()
+        self.assertEqual(payload["mode"], "sequential")
+        self.assertNotIn("Alice", payload["summary"])
+        self.assertFalse(payload["discarded_speculative_summary"])
+        self.assertEqual(payload["cost"]["summary_records"], 1)
+
+    def test_pipeline_parallel_discards_the_unsafe_speculative_summary(self):
+        response = self.client.post(
+            "/api/pipeline",
+            json={"conversation": _turns("Contact Alice."), "mode": "parallel"},
+        )
+
+        payload = response.json()
+        self.assertNotIn("Alice", payload["summary"])
+        self.assertTrue(payload["discarded_speculative_summary"])
+        self.assertEqual(payload["cost"]["summary_records"], 2)
+
+    def test_pipeline_rejects_an_unknown_mode(self):
+        response = self.client.post(
+            "/api/pipeline",
+            json={"conversation": _turns("Hello."), "mode": "diagonal"},
+        )
+
+        self.assertEqual(response.status_code, 422)
+
+    def test_pipeline_still_works_when_pricing_is_unavailable(self):
+        """Costing is a nice-to-have; a retail outage must not fail the work."""
+        client = TestClient(
+            create_app(
+                FakeLanguageService(),
+                FakePricing(PricingUnavailableError("retail feed is down")),
+            )
+        )
+
+        response = client.post(
+            "/api/pipeline", json={"conversation": _turns("Contact Alice.")}
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNone(response.json()["cost"])
+        self.assertNotIn("Alice", response.json()["summary"])
+
+    def test_task_endpoints_enforce_the_same_transcript_guards(self):
+        for path in ("/api/redact", "/api/summarize", "/api/pipeline"):
+            with self.subTest(path=path):
+                oversized = self.client.post(
+                    path,
+                    json={"conversation": _turns("x" * (MAX_TURN_LENGTH + 1))},
+                )
+                self.assertEqual(oversized.status_code, 400)
+
     def test_azure_failure_is_surfaced_as_a_bad_gateway(self):
         class BrokenLanguageService(FakeLanguageService):
             def summarize(self, conv):

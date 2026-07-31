@@ -76,7 +76,20 @@ def _default_pii_client():
                 {
                     "id": "2",
                     "redactedContent": {"text": "This is *****."},
-                    "entities": [{"category": "Person"}, {"category": "Person"}],
+                    "entities": [
+                        {
+                            "category": "Person",
+                            "offset": 8,
+                            "length": 5,
+                            "confidenceScore": 0.9,
+                        },
+                        {
+                            "category": "Person",
+                            "offset": 8,
+                            "length": 5,
+                            "confidenceScore": 0.8,
+                        },
+                    ],
                 },
             ]
         )
@@ -178,6 +191,43 @@ class AzureLanguageServiceTests(unittest.TestCase):
                 DEFAULT_POLLING_INTERVAL_SECONDS,
             )
         self.assertLess(DEFAULT_POLLING_INTERVAL_SECONDS, 5)
+
+    def test_detect_pii_reports_spans_without_the_matched_values(self):
+        service = AzureLanguageService(
+            _default_pii_client(), _default_summary_client()
+        )
+
+        entities = service.detect_pii(_conversation()).entities
+
+        self.assertEqual([entity.turn for entity in entities], [2, 2])
+        self.assertEqual(entities[0].offset, 8)
+        self.assertEqual(entities[0].length, 5)
+        self.assertEqual(entities[0].confidence_score, 0.9)
+        self.assertFalse(hasattr(entities[0], "text"))
+
+    def test_pii_categories_are_omitted_unless_configured(self):
+        client = _default_pii_client()
+        service = AzureLanguageService(client, _default_summary_client())
+
+        service.detect_pii(_conversation())
+
+        self.assertNotIn("piiCategories", client.tasks[0]["tasks"][0]["parameters"])
+
+    def test_configured_pii_categories_are_sent_to_the_service(self):
+        """Preview categories such as DateOfBirth are only returned when named."""
+        client = _default_pii_client()
+        service = AzureLanguageService(
+            client,
+            _default_summary_client(),
+            pii_categories=("Person", "DateOfBirth"),
+        )
+
+        service.detect_pii(_conversation())
+
+        self.assertEqual(
+            client.tasks[0]["tasks"][0]["parameters"]["piiCategories"],
+            ["Person", "DateOfBirth"],
+        )
 
     def test_a_failed_task_raises_with_its_errors(self):
         client = FakeConversationClient(

@@ -6,14 +6,21 @@ from typing import Any
 from azure.ai.language.conversations import ConversationAnalysisClient
 from azure.identity import DefaultAzureCredential
 
-from benchmark import PiiResult
+from benchmark import PiiEntity, PiiResult
 from conversation import Conversation, Turn
 
 SUMMARY_ASPECTS = ("issue", "resolution")
 
-# The SDK's default api-version (2023-04-01) predates ConversationalPIITask;
-# 2024-05-01 is the GA version that supports both tasks.
-API_VERSION = "2024-05-01"
+# The SDK's default api-version (2023-04-01) predates ConversationalPIITask.
+# 2024-11-01 is the current GA version supporting both tasks.
+#
+# Several categories — DateOfBirth among them — exist only on the preview API
+# and only when named explicitly in piiCategories. On GA a spoken date of
+# birth is not detected and passes through un-redacted. Set
+# LANGUAGE_API_VERSION=2025-11-15-preview together with PII_CATEGORIES to opt
+# in, accepting Microsoft's preview terms. See evaluation/README.md.
+DEFAULT_API_VERSION = "2024-11-01"
+PREVIEW_API_VERSION = "2025-11-15-preview"
 
 # The SDK default is 5 seconds, which would quantise every measurement to the
 # poll cadence rather than reflecting service latency. Both conversation tasks
@@ -42,11 +49,13 @@ class AzureLanguageService:
         summary_client: ConversationAnalysisClient,
         credential=None,
         polling_interval: int = DEFAULT_POLLING_INTERVAL_SECONDS,
+        pii_categories: tuple[str, ...] = (),
     ) -> None:
         self._pii_client = pii_client
         self._summary_client = summary_client
         self._credential = credential
         self._polling_interval = polling_interval
+        self._pii_categories = pii_categories
 
     @classmethod
     def from_environment(cls) -> "AzureLanguageService":
@@ -57,11 +66,18 @@ class AzureLanguageService:
             raise RuntimeError(
                 "LANGUAGE_ENDPOINT must be the root Language resource endpoint."
             )
+        api_version = os.getenv("LANGUAGE_API_VERSION", DEFAULT_API_VERSION)
+        categories = tuple(
+            category.strip()
+            for category in os.getenv("PII_CATEGORIES", "").split(",")
+            if category.strip()
+        )
         credential = DefaultAzureCredential()
         return cls(
-            ConversationAnalysisClient(endpoint, credential, api_version=API_VERSION),
-            ConversationAnalysisClient(endpoint, credential, api_version=API_VERSION),
+            ConversationAnalysisClient(endpoint, credential, api_version=api_version),
+            ConversationAnalysisClient(endpoint, credential, api_version=api_version),
             credential=credential,
+            pii_categories=categories,
         )
 
     def _run_task(
@@ -81,10 +97,17 @@ class AzureLanguageService:
         return item["results"]["conversations"][0]
 
     def detect_pii(self, conv: Conversation) -> PiiResult:
+        parameters: dict[str, Any] = {}
+        if self._pii_categories:
+            parameters["piiCategories"] = list(self._pii_categories)
         result = self._run_task(
             self._pii_client,
             conv,
-            {"taskName": "pii", "kind": "ConversationalPIITask", "parameters": {}},
+            {
+                "taskName": "pii",
+                "kind": "ConversationalPIITask",
+                "parameters": parameters,
+            },
         )
         items = result["conversationItems"]
         if len(items) != len(conv.turns):
@@ -97,16 +120,19 @@ class AzureLanguageService:
                 for turn, item in zip(conv.turns, items)
             )
         )
-        categories = tuple(
-            sorted(
-                {
-                    entity["category"]
-                    for item in items
-                    for entity in item.get("entities", [])
-                }
+        entities = tuple(
+            PiiEntity(
+                turn=index,
+                category=entity["category"],
+                offset=entity["offset"],
+                length=entity["length"],
+                confidence_score=entity.get("confidenceScore", 0.0),
             )
+            for index, item in enumerate(items, start=1)
+            for entity in item.get("entities", [])
         )
-        return PiiResult(redacted=redacted, categories=categories)
+        categories = tuple(sorted({entity.category for entity in entities}))
+        return PiiResult(redacted=redacted, categories=categories, entities=entities)
 
     def summarize(self, conv: Conversation) -> str:
         result = self._run_task(
