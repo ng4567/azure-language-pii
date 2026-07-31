@@ -13,6 +13,12 @@ uv run python evaluation/evaluate.py --pipeline   # also scan summaries
 The scorer exits non-zero if any labelled value survived redaction, so it can
 gate a pipeline.
 
+Do not pipe it without preserving that status. A shell reports the exit code of
+the *last* command in a pipeline, so `evaluate.py | tee report.txt` reports
+`tee`'s success and the gate silently passes no matter what leaked. Use
+`set -o pipefail`, or check `${PIPESTATUS[0]}`, or just redirect to a file
+instead of piping.
+
 ## What is measured
 
 **Leak rate** is the headline: did a labelled PII value survive verbatim in
