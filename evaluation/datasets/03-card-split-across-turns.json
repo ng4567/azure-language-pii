@@ -1,0 +1,22 @@
+{
+  "id": "03-card-split-across-turns",
+  "scenario": "Customer reads the card number in fragments, with agent backchannels between them.",
+  "notes": "No single turn contains a complete card number. Tests whether detection uses conversation context or treats each turn independently.",
+  "conversation": [
+    {"role": "Agent", "text": "Go ahead with the card number whenever you're ready."},
+    {"role": "Customer", "text": "4111"},
+    {"role": "Agent", "text": "Got it."},
+    {"role": "Customer", "text": "1111"},
+    {"role": "Agent", "text": "Mhm."},
+    {"role": "Customer", "text": "1111"},
+    {"role": "Agent", "text": "And the last four?"},
+    {"role": "Customer", "text": "1111"},
+    {"role": "Agent", "text": "Thank you, that's gone through."}
+  ],
+  "expected": [
+    {"turn": 2, "text": "4111", "category": "CreditCard"},
+    {"turn": 4, "text": "1111", "category": "CreditCard"},
+    {"turn": 6, "text": "1111", "category": "CreditCard"},
+    {"turn": 8, "text": "1111", "category": "CreditCard"}
+  ]
+}

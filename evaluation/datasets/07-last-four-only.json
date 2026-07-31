@@ -1,0 +1,11 @@
+{
+  "id": "07-last-four-only",
+  "scenario": "Agent and customer refer to a stored card by its last four digits only.",
+  "notes": "Deliberate negative control. Last-four references are permitted under PCI DSS, so detections here are not failures — they are over-redaction, which costs summary quality. Expected list is intentionally empty.",
+  "conversation": [
+    {"role": "Agent", "text": "I see a card on file ending in 4242. Would you like me to charge that one?"},
+    {"role": "Customer", "text": "Yes, the card ending in 4242 is fine. It's the one I always use."},
+    {"role": "Agent", "text": "Done. The receipt is on its way to the address we have on file."}
+  ],
+  "expected": []
+}

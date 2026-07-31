@@ -121,6 +121,19 @@ LANGUAGE_ENDPOINT=https://<resource-name>.cognitiveservices.azure.com
 AZURE_REGION=eastus2
 ```
 
+Optional settings:
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `LANGUAGE_API_VERSION` | `2024-11-01` | Conversation API version |
+| `PII_CATEGORIES` | unset | Comma-separated categories to request explicitly |
+| `CORS_ALLOW_ORIGINS` | unset | Comma-separated browser origins allowed to call the API |
+
+**Dates of birth are not redacted on the GA API.** `DateOfBirth` is a preview
+category and is rejected outright on `2024-11-01`. Opting in means accepting
+Microsoft's preview terms — see [evaluation/README.md](evaluation/README.md)
+for the measurement and the exact settings.
+
 Use the root `cognitiveservices.azure.com` endpoint, not a Foundry project
 endpoint containing `/api/projects/`. Authentication uses
 `DefaultAzureCredential`, which picks up your Azure CLI login locally.
@@ -153,13 +166,34 @@ Input limits: the conversation API enforces **1,000 characters per turn**
 
 ## API
 
+The backend is usable on its own — nothing here needs the dashboard. Browsable
+docs are at `/api-docs`, interactive Swagger at `/docs`, and the schema at
+`/openapi.json`.
+
 | Endpoint | Purpose |
 | --- | --- |
-| `GET /api/config` | Input limits and iteration defaults used by the UI |
+| `POST /api/redact` | Redact PII from a transcript, and report every detected span |
+| `POST /api/summarize` | Summarize a transcript (issue + resolution aspects) |
+| `POST /api/pipeline` | Redact and summarize together, `sequential` or `parallel` |
+| `POST /api/benchmark` | Run both pipelines N times and compare latency and cost |
+| `GET /api/config` | Input limits, allowed roles, and iteration defaults |
 | `GET /api/samples` | The two bundled fixtures |
 | `GET /api/pricing` | Current regional retail meters |
-| `POST /api/benchmark` | Run the comparison |
 | `GET /healthz` | Health probe, does not call Azure |
+
+Every `POST` takes the same `conversation` array:
+
+```bash
+curl -X POST http://localhost:8000/api/redact \
+  -H "Content-Type: application/json" \
+  -d '{"conversation": [{"role": "Customer", "text": "Maya Chen, card 4111 1111 1111 1111."}]}'
+```
+
+Detected spans carry category, offset, length, and confidence — never the
+matched text, which is the PII value itself. Cross-origin browser callers need
+`CORS_ALLOW_ORIGINS` set; it is off by default. There is no authentication in
+front of these endpoints, so keep the container behind your own network
+controls.
 
 `POST /api/benchmark` accepts
 
@@ -255,3 +289,16 @@ Official references:
 ```bash
 uv run python -m unittest discover -v
 ```
+
+## Evaluating redaction quality
+
+`evaluation/` holds ten hand-labelled transcripts and a scorer that reports
+recall, over-detection, and whether any labelled value survived redaction:
+
+```bash
+uv run python evaluation/evaluate.py
+```
+
+It exits non-zero if anything leaked. See
+[evaluation/README.md](evaluation/README.md) for measured results, including
+which patterns the service handles well and where it over-redacts.

@@ -1,0 +1,17 @@
+{
+  "id": "02-spelled-digits-card",
+  "scenario": "Customer reads a card number aloud; speech-to-text transcribed the digits as words.",
+  "notes": "The realistic transcription case. A speech pipeline that has not applied inverse text normalisation emits number words, not digits. If the detector only matches digit patterns, this is a silent PCI leak.",
+  "conversation": [
+    {"role": "Agent", "text": "I can take that payment over the phone. Whenever you're ready, go ahead with the card number."},
+    {"role": "Customer", "text": "Okay, it's four one one one, one one one one, one one one one, one one one one."},
+    {"role": "Agent", "text": "Thank you, and the three digit security code on the back?"},
+    {"role": "Customer", "text": "It's one two three, and it expires April twenty twenty eight."},
+    {"role": "Agent", "text": "Perfect, that's approved. Anything else I can help you with today?"}
+  ],
+  "expected": [
+    {"turn": 2, "text": "four one one one, one one one one, one one one one, one one one one", "category": "CreditCard"},
+    {"turn": 4, "text": "one two three", "category": "CreditCard"},
+    {"turn": 4, "text": "April twenty twenty eight", "category": "CreditCard"}
+  ]
+}

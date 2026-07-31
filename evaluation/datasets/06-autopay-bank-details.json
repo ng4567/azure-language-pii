@@ -1,0 +1,19 @@
+{
+  "id": "06-autopay-bank-details",
+  "scenario": "Customer sets up autopay from a checking account rather than a card.",
+  "notes": "Bank routing and account numbers are financial PII that PCI-focused rules often miss because they are not card numbers.",
+  "conversation": [
+    {"role": "Agent", "text": "I can set up automatic payments from a bank account if you'd prefer that to a card."},
+    {"role": "Customer", "text": "Yes please. This is Priya Raman, and the routing number is 021000021."},
+    {"role": "Agent", "text": "Thank you, and the account number it should draft from?"},
+    {"role": "Customer", "text": "The checking account number is 000123456789."},
+    {"role": "Agent", "text": "Autopay is active starting with next month's bill."},
+    {"role": "Customer", "text": "Can you also email the confirmation to priya.raman@example.org?"}
+  ],
+  "expected": [
+    {"turn": 2, "text": "Priya Raman", "category": "Person"},
+    {"turn": 2, "text": "021000021", "category": "ABARoutingNumber"},
+    {"turn": 4, "text": "000123456789", "category": "USBankAccountNumber"},
+    {"turn": 6, "text": "priya.raman@example.org", "category": "Email"}
+  ]
+}
