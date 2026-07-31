@@ -8,6 +8,7 @@ warnings.filterwarnings(
     message="Using `httpx` with `starlette.testclient` is deprecated",
     category=StarletteDeprecationWarning,
 )
+from azure.core.exceptions import ServiceRequestError
 from fastapi.testclient import TestClient
 
 from benchmark import PiiResult
@@ -189,6 +190,20 @@ class ApiTests(unittest.TestCase):
                 raise RuntimeError("summarization exploded")
 
         client = TestClient(create_app(BrokenLanguageService(), FakePricing()))
+
+        response = client.post("/api/benchmark", json={"text": "Hello."})
+
+        self.assertEqual(response.status_code, 502)
+        self.assertIn("Azure benchmark failed", response.json()["detail"])
+
+    def test_azure_transport_failure_is_surfaced_as_a_bad_gateway(self):
+        """ServiceRequestError is an AzureError but not an HttpResponseError."""
+
+        class UnreachableLanguageService(FakeLanguageService):
+            def detect_pii(self, text):
+                raise ServiceRequestError("connection refused")
+
+        client = TestClient(create_app(UnreachableLanguageService(), FakePricing()))
 
         response = client.post("/api/benchmark", json={"text": "Hello."})
 
