@@ -1,11 +1,19 @@
 const state = {
   samples: null,
   source: "pii",
-  config: { max_text_length: 5000, default_iterations: 3, max_iterations: 10 },
+  turns: [],
+  config: {
+    max_text_length: 5000,
+    max_turn_length: 1000,
+    roles: ["Agent", "Customer"],
+    default_iterations: 3,
+    max_iterations: 10,
+  },
   projection: null,
 };
 
-const textArea = document.querySelector("#input-text");
+const turnEditor = document.querySelector("#turn-editor");
+const addTurnButton = document.querySelector("#add-turn");
 const runButton = document.querySelector("#run-button");
 const statusBox = document.querySelector("#status");
 const iterationsInput = document.querySelector("#iterations");
@@ -16,10 +24,27 @@ function setStatus(message, isError = false) {
   statusBox.classList.toggle("error", isError);
 }
 
+// String.length counts UTF-16 code units, which is exactly how Azure bills.
+function totalCharacters() {
+  return state.turns.reduce((sum, turn) => sum + turn.text.length, 0);
+}
+
 function updateCount() {
   const limit = state.config.max_text_length;
-  document.querySelector("#character-count").textContent =
-    `${textArea.value.length.toLocaleString()} / ${limit.toLocaleString()} characters`;
+  const total = totalCharacters();
+  const counter = document.querySelector("#character-count");
+  counter.textContent =
+    `${total.toLocaleString()} / ${limit.toLocaleString()} characters`;
+  counter.classList.toggle("over-limit", total > limit);
+}
+
+function updateTurnCounter(index) {
+  const row = turnEditor.children[index];
+  if (!row) return;
+  const counter = row.querySelector(".turn-count");
+  const length = state.turns[index].text.length;
+  counter.textContent = `${length.toLocaleString()} / ${state.config.max_turn_length.toLocaleString()}`;
+  counter.classList.toggle("over-limit", length > state.config.max_turn_length);
 }
 
 function markActiveTab(source) {
@@ -28,20 +53,91 @@ function markActiveTab(source) {
   });
 }
 
-function selectSource(source) {
+function becomeCustom() {
+  if (state.source !== "custom") {
+    state.source = "custom";
+    markActiveTab("custom");
+  }
+}
+
+function renderTurnEditor() {
+  turnEditor.replaceChildren();
+  state.turns.forEach((turn, index) => {
+    const row = document.createElement("div");
+    row.className = "turn-row";
+
+    const role = document.createElement("select");
+    role.className = "turn-role";
+    role.setAttribute("aria-label", `Turn ${index + 1} speaker`);
+    state.config.roles.forEach((name) => {
+      const option = document.createElement("option");
+      option.value = name;
+      option.textContent = name;
+      option.selected = name === turn.role;
+      role.append(option);
+    });
+    role.addEventListener("change", () => {
+      state.turns[index].role = role.value;
+      becomeCustom();
+    });
+
+    const text = document.createElement("input");
+    text.className = "turn-text";
+    text.type = "text";
+    text.value = turn.text;
+    text.placeholder = "What was said…";
+    text.setAttribute("aria-label", `Turn ${index + 1} text`);
+    text.addEventListener("input", () => {
+      state.turns[index].text = text.value;
+      becomeCustom();
+      updateTurnCounter(index);
+      updateCount();
+    });
+
+    const counter = document.createElement("span");
+    counter.className = "turn-count";
+
+    const remove = document.createElement("button");
+    remove.className = "turn-remove";
+    remove.type = "button";
+    remove.textContent = "×";
+    remove.setAttribute("aria-label", `Remove turn ${index + 1}`);
+    remove.disabled = state.turns.length === 1;
+    remove.addEventListener("click", () => {
+      state.turns.splice(index, 1);
+      becomeCustom();
+      renderTurnEditor();
+      updateCount();
+    });
+
+    row.append(role, text, counter, remove);
+    turnEditor.append(row);
+    updateTurnCounter(index);
+  });
+}
+
+function loadTurns(turns, source) {
+  state.turns = turns.map((turn) => ({ role: turn.role, text: turn.text }));
   state.source = source;
   markActiveTab(source);
-  if (source !== "custom" && state.samples) {
-    textArea.value = state.samples[source].content;
-    document.querySelector("#sample-note").textContent =
-      `${state.samples[source].filename} · ${state.samples[source].characters} characters · matched sample length`;
-  } else {
-    // Never clear what the user typed; switching to Custom keeps the text.
-    document.querySelector("#sample-note").textContent =
-      "Your text remains in this browser and is sent directly to the local backend.";
-    textArea.focus();
-  }
+  renderTurnEditor();
   updateCount();
+}
+
+function selectSource(source) {
+  if (source !== "custom" && state.samples) {
+    const sample = state.samples[source];
+    loadTurns(sample.conversation, source);
+    document.querySelector("#sample-note").textContent =
+      `${sample.filename} · ${sample.conversation.length} turns · ${sample.characters} characters · matched transcript length`;
+  } else {
+    // Never clear what the user typed; switching to Custom keeps the turns.
+    state.source = "custom";
+    markActiveTab("custom");
+    document.querySelector("#sample-note").textContent =
+      "Your transcript remains in this browser and is sent directly to the local backend.";
+    updateCount();
+  }
 }
 
 function formatMs(value) {
@@ -219,7 +315,6 @@ async function loadInitialData() {
 
   if (configResult.status === "fulfilled" && configResult.value.ok) {
     state.config = await configResult.value.json();
-    textArea.maxLength = state.config.max_text_length;
     iterationsInput.max = state.config.max_iterations;
     iterationsInput.value = state.config.default_iterations;
   }
@@ -229,7 +324,7 @@ async function loadInitialData() {
     selectSource("pii");
   } else {
     setStatus("Could not load samples.", true);
-    updateCount();
+    loadTurns([{ role: state.config.roles[0], text: "" }], "custom");
   }
 
   const meterNote = document.querySelector("#meter-note");
@@ -251,12 +346,18 @@ document.querySelectorAll(".source-tab").forEach((button) => {
   button.addEventListener("click", () => selectSource(button.dataset.source));
 });
 
-textArea.addEventListener("input", () => {
+addTurnButton.addEventListener("click", () => {
+  const last = state.turns[state.turns.length - 1];
+  const next =
+    last && last.role === state.config.roles[0]
+      ? state.config.roles[1]
+      : state.config.roles[0];
+  state.turns.push({ role: next, text: "" });
+  becomeCustom();
+  renderTurnEditor();
   updateCount();
-  if (state.source !== "custom") {
-    state.source = "custom";
-    markActiveTab("custom");
-  }
+  const rows = turnEditor.querySelectorAll(".turn-text");
+  rows[rows.length - 1].focus();
 });
 
 prevalenceInput.addEventListener("input", () => {
@@ -275,7 +376,7 @@ runButton.addEventListener("click", async () => {
     const response = await fetch("/api/benchmark", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text: textArea.value, iterations }),
+      body: JSON.stringify({ conversation: state.turns, iterations }),
     });
     const payload = await readJson(response);
     if (!response.ok) throw new Error(errorMessage(payload, "Benchmark failed."));

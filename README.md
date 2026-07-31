@@ -1,11 +1,15 @@
-# Azure PII and Summarization Benchmark
+# Azure Conversation PII and Summarization Benchmark
 
-A local FastAPI dashboard for comparing two Azure AI Language pipelines:
+A local FastAPI dashboard for comparing two Azure AI Language pipelines over
+call-center style transcripts, using the **conversation** endpoints:
+`ConversationalPIITask` for PII redaction and `ConversationalSummarizationTask`
+(issue + resolution aspects) for summarization.
 
-1. **Sequential:** detect PII, redact the input, then summarize.
+1. **Sequential:** detect conversation PII, redact every turn, then summarize
+   the redacted transcript.
 2. **Speculative parallel:** detect PII and summarize concurrently. If PII is
-   detected, discard the speculative summary and summarize the redacted input
-   again. If no PII is detected, use the speculative summary.
+   detected, discard the speculative summary and summarize the redacted
+   transcript again. If no PII is detected, use the speculative summary.
 
 The dashboard reports measured latency and retail cost for both, then projects
 them across a range of corpus PII prevalence so you can find the break-even
@@ -27,22 +31,28 @@ network bound, so one draw is not a usable basis for a decision. Each run:
   percentile is coarse by construction — read it as spread, not as a
   distribution tail.
 
-Summarization is a long-running operation. The SDK's default poll interval is
-5 seconds, which would quantise every measurement to the poll cadence rather
-than the service's actual latency — and the speculative-parallel pipeline would
-pay that artefact twice, since it puts two summarizations on its critical path.
-This app polls at 1 second. Reported summarization latency is therefore submit
-plus poll wall time, not pure inference time, and it still carries up to one
-poll interval of granularity.
+**Both conversation tasks are asynchronous long-running jobs** — conversation
+PII has no synchronous variant. The SDK's default poll interval is 5 seconds,
+which would quantise every measurement to the poll cadence rather than the
+service's actual latency — and the speculative-parallel pipeline would pay that
+artefact on every operation on its critical path. This app polls at 1 second.
+Reported latency is therefore submit plus poll wall time, not pure inference
+time, and every operation carries up to one poll interval of granularity.
+
+Because PII detection is itself a polled job, its latency floor is far higher
+than the synchronous text PII endpoint's. That pushes sequential latency up and
+moves the break-even prevalence relative to a text-PII benchmark — which is
+exactly why measuring the conversation endpoints you actually plan to use
+matters.
 
 The warm-up costs two extra Azure calls per benchmark run, which are not
-included in the reported per-document cost.
+included in the reported per-transcript cost.
 
 ## The corpus projection
 
-A single document is one point. What actually decides the trade-off is `p`, the
-fraction of your documents that contain **any** PII, because that is how often
-the speculative summary gets thrown away:
+A single transcript is one point. What actually decides the trade-off is `p`,
+the fraction of your transcripts that contain **any** PII, because that is how
+often the speculative summary gets thrown away:
 
 ```
 E[latency_sequential] = t_pii + t_summary                     (flat in p)
@@ -57,29 +67,30 @@ price of a second of latency saved at your chosen `p`.
 
 Two caveats on reading the sweep:
 
-- **`p` is not a free axis.** Longer documents are more likely to contain an
-  entity, so `p` and document length move together. The projection describes a
-  corpus whose documents resemble the one you measured — it is not a
+- **`p` is not a free axis.** Longer transcripts are more likely to contain an
+  entity, so `p` and transcript length move together. The projection describes
+  a corpus whose transcripts resemble the one you measured — it is not a
   length-independent model.
-- **Within-document PII density does not enter the model.** Billing is per
-  1,000 characters of input per operation, and Azure's `redacted_text` replaces
-  each entity with asterisks of equal length, so a document with one entity and
-  one with fifty cost and time the same. Only presence matters, because the
-  pipeline discards the speculative summary on *any* detection.
+- **Within-transcript PII density does not enter the model.** Billing is per
+  1,000 characters of input per operation, and the conversation PII task's
+  `redactedContent` masks each entity with characters of equal length, so a
+  transcript with one entity and one with fifty cost and time the same. Only
+  presence matters, because the pipeline discards the speculative summary on
+  *any* detection.
 
-  That last point is a property of this implementation, not a law. Extractive
-  summarization returns verbatim input sentences with offsets, so a smarter
-  pipeline could compare the selected sentences against the PII spans and only
-  re-summarize on actual overlap — which would make density matter and lower
-  the retry rate. This app does not do that. (The same trick would **not** be
-  sound for abstractive summarization.)
+  Note that conversation summarization is **abstractive** — the issue and
+  resolution summaries are generated text, not verbatim input sentences — so
+  span-overlap tricks that are sound for extractive summarization (only
+  re-summarizing when a selected sentence overlaps a PII span) do **not**
+  transfer here. On any detection, the speculative summary must be discarded.
 
 ## Privacy posture
 
-The speculative call sends **un-redacted** text to Azure, and service-side input
-logging is left at the Azure default (inputs retained 48 hours for
-troubleshooting). That is an accepted trade-off for this benchmark. If you need
-to change it, pass `disable_service_logs=True` in `azure_language.py`.
+The speculative call sends the **un-redacted** transcript to Azure, and
+service-side input logging is left at the Azure default (inputs retained 48
+hours for troubleshooting). That is an accepted trade-off for this benchmark.
+If you need to change it, add `"loggingOptOut": true` to the task parameters in
+`azure_language.py`.
 
 What the backend itself guarantees is narrower: an unsafe speculative summary is
 never returned to the browser or logged locally — when PII is found it is
@@ -124,15 +135,21 @@ uv run uvicorn main:app --reload
 
 Open [http://127.0.0.1:8000](http://127.0.0.1:8000).
 
-The UI provides custom input and two synthetic fixtures:
+The UI provides a structured turn editor (Agent/Customer roles) and two
+synthetic transcript fixtures:
 
-- `samples/PII.txt`
-- `samples/No PII.txt`
+- `samples/PII.json` — includes a name, phone number, email address, and a
+  credit card number, since PCI redaction is the motivating scenario
+- `samples/No PII.json`
 
-The fixtures have exactly the same character count for an equivalent payload
-comparison. Note that both are under 1,000 characters, so both round up to a
-single text record — the equal length matters for latency comparability, not
-for cost.
+The fixtures have the same turn count and exactly the same total character
+count for an equivalent payload comparison. Note that both are under 1,000
+characters in total, so both round up to a single text record — the equal
+length matters for latency comparability, not for cost.
+
+Input limits: the conversation API enforces **1,000 characters per turn**
+(counted in UTF-16 code units); this app additionally caps a transcript at
+5,000 characters in total.
 
 ## API
 
@@ -144,9 +161,22 @@ for cost.
 | `POST /api/benchmark` | Run the comparison |
 | `GET /healthz` | Health probe, does not call Azure |
 
-`POST /api/benchmark` accepts `{"text": ..., "iterations": 3, "warm_up": true}`
-and returns aggregated timings, per-document cost, and the prevalence
-projection.
+`POST /api/benchmark` accepts
+
+```json
+{
+  "conversation": [
+    {"role": "Agent", "text": "Who am I speaking with?"},
+    {"role": "Customer", "text": "This is Maya Chen."}
+  ],
+  "iterations": 3,
+  "warm_up": true
+}
+```
+
+and returns aggregated timings, per-transcript cost, and the prevalence
+projection. The `redacted_text` field renders the redacted transcript one
+`Role: text` line per turn.
 
 ## Run in Docker
 
@@ -193,15 +223,17 @@ The container runs as non-root UID `10001`, listens on port `8000`, and exposes
 
 Microsoft defines one Azure AI Language text record as 1,000 characters. Each
 started 1,000 characters is counted separately for every PII or summarization
-operation. Characters are counted in UTF-16 code units, matching how Azure
-bills and how the default `string_index_type` measures offsets.
+operation, summed across all turns of the transcript. Characters are counted
+in UTF-16 code units, matching how Azure bills and how the conversation API
+enforces its per-turn limit.
 
 The app loads current regional USD retail rates from Microsoft's
 [Azure Retail Prices API](https://prices.azure.com/api/retail/prices) using
-these Standard-tier meters:
+these Standard-tier meters (the feed has no conversation-specific meters; the
+conversation skills bill under the same records):
 
-- `Standard Text Records` for PII detection
-- `Standard Summarization Text Records` for extractive summarization
+- `Standard Text Records` for conversation PII detection
+- `Standard Summarization Text Records` for conversation summarization
 
 The feed is paginated and mixes `Consumption` with `DevTestConsumption` rows and
 one row per commitment tier, so the loader follows `NextPageLink` and keeps only

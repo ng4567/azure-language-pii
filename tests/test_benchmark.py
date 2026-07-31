@@ -1,3 +1,4 @@
+import json
 import threading
 import unittest
 from pathlib import Path
@@ -10,6 +11,13 @@ from benchmark import (
     records_for_length,
     text_records,
 )
+from conversation import MAX_TURN_LENGTH, Conversation
+
+
+def _load_sample(filename):
+    root = Path(__file__).parents[1]
+    turns = json.loads((root / "samples" / filename).read_text(encoding="utf-8"))
+    return Conversation.from_dicts(turns)
 
 
 class TextRecordTests(unittest.TestCase):
@@ -41,19 +49,25 @@ class PercentileTests(unittest.TestCase):
 
 class SampleTests(unittest.TestCase):
     def test_bundled_samples_have_identical_character_counts(self):
-        root = Path(__file__).parents[1]
-        pii = (root / "samples" / "PII.txt").read_text().strip()
-        no_pii = (root / "samples" / "No PII.txt").read_text().strip()
+        pii = _load_sample("PII.json")
+        no_pii = _load_sample("No PII.json")
 
-        self.assertEqual(len(pii), len(no_pii))
-        self.assertGreater(len(pii), 400)
+        self.assertEqual(pii.billable_characters(), no_pii.billable_characters())
+        self.assertEqual(len(pii.turns), len(no_pii.turns))
+        self.assertGreater(pii.billable_characters(), 400)
 
-    def test_no_pii_sample_avoids_person_type_references(self):
-        root = Path(__file__).parents[1]
-        no_pii = (root / "samples" / "No PII.txt").read_text().lower()
+    def test_samples_respect_the_per_turn_limit(self):
+        for filename in ("PII.json", "No PII.json"):
+            for turn in _load_sample(filename).turns:
+                self.assertLessEqual(turn.billable_characters(), MAX_TURN_LENGTH)
 
-        for person_reference in ("customer", "representative", "person", "user"):
-            self.assertNotIn(person_reference, no_pii)
+    def test_no_pii_sample_avoids_person_references_and_digits(self):
+        text = _load_sample("No PII.json").as_text().lower()
+        body = text.replace("agent:", "").replace("customer:", "")
+
+        for person_reference in ("representative", "person", "user"):
+            self.assertNotIn(person_reference, body)
+        self.assertFalse(any(character.isdigit() for character in body))
 
 
 class BenchmarkServiceTests(unittest.TestCase):

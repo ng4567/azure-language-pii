@@ -10,9 +10,9 @@
   <main>
     <header class="hero">
       <div>
-        <p class="eyebrow">Azure AI Language · Performance Lab</p>
+        <p class="eyebrow">Azure AI Language · Conversation Performance Lab</p>
         <h1>Privacy pipeline,<br><span>measured.</span></h1>
-        <p class="lede">Compare redact-first processing with speculative parallel execution—using the same text, the same Azure resource, and official Microsoft retail pricing.</p>
+        <p class="lede">Compare redact-first processing with speculative parallel execution—using the same transcript, the same Azure resource, and official Microsoft retail pricing. Conversation PII redaction feeds conversation summarization (issue + resolution).</p>
       </div>
       <div class="hero-badge">
         <span class="pulse"></span>
@@ -24,18 +24,19 @@
       <div class="section-heading">
         <div>
           <p class="step">01 · INPUT</p>
-          <h2>Choose your test payload</h2>
+          <h2>Build your test transcript</h2>
         </div>
         <span id="character-count" class="character-count">0 characters</span>
       </div>
       <div class="source-tabs" role="group" aria-label="Input source">
-        <button class="source-tab active" data-source="pii">PII.txt</button>
-        <button class="source-tab" data-source="no_pii">No PII.txt</button>
-        <button class="source-tab" data-source="custom">Custom text</button>
+        <button class="source-tab active" data-source="pii">PII transcript</button>
+        <button class="source-tab" data-source="no_pii">No-PII transcript</button>
+        <button class="source-tab" data-source="custom">Custom transcript</button>
       </div>
-      <textarea id="input-text" aria-label="Benchmark text" spellcheck="true"></textarea>
+      <div id="turn-editor" class="turn-editor" aria-label="Conversation turns"></div>
+      <button id="add-turn" class="add-turn" type="button">+ Add turn</button>
       <div class="input-footer">
-        <p id="sample-note">Synthetic sample · equal character count</p>
+        <p id="sample-note">Synthetic transcript · equal character count</p>
         <label class="iteration-control">
           <span>Iterations</span>
           <input id="iterations" type="number" min="1" max="10" value="3">
@@ -49,7 +50,7 @@
 
     <section class="privacy-note">
       <strong>How speculative parallel works</strong>
-      <p>PII detection and summarization start together. If PII is found, the first summary is discarded and the redacted input is summarized again. Unsafe speculative summaries are never returned or rendered by this backend — though the speculative call does send un-redacted text to Azure.</p>
+      <p>Conversation PII detection and conversation summarization start together. If PII is found, the first summary is discarded and the redacted transcript is summarized again. Unsafe speculative summaries are never returned or rendered by this backend — though the speculative call does send the un-redacted transcript to Azure. Both tasks are asynchronous jobs polled at one-second intervals, so every operation's latency has a poll-cadence floor.</p>
     </section>
 
     <section id="status" class="status" aria-live="polite"></section>
@@ -66,7 +67,7 @@
       <div class="comparison-grid">
         <article class="result-card sequential">
           <div class="card-label"><span>A</span> Sequential</div>
-          <p class="pipeline-flow">PII → redact → summarize</p>
+          <p class="pipeline-flow">Conversation PII → redact → summarize</p>
           <div class="metric"><strong id="sequential-latency">—</strong><span>median latency</span></div>
           <div class="bar-track"><div id="sequential-bar" class="bar"></div></div>
           <div class="card-stats">
@@ -79,7 +80,7 @@
 
         <article class="result-card parallel">
           <div class="card-label"><span>B</span> Speculative parallel</div>
-          <p class="pipeline-flow">PII ∥ summarize → conditional retry</p>
+          <p class="pipeline-flow">Conversation PII ∥ summarize → conditional retry</p>
           <div class="metric"><strong id="parallel-latency">—</strong><span>median latency</span></div>
           <div class="bar-track"><div id="parallel-bar" class="bar"></div></div>
           <div class="card-stats">
@@ -144,8 +145,8 @@
       </div>
 
       <article id="redacted-panel" class="panel redacted-panel">
-        <p class="step">REDACTED INPUT</p>
-        <p id="redacted-text"></p>
+        <p class="step">REDACTED TRANSCRIPT</p>
+        <p id="redacted-text" class="transcript"></p>
       </article>
     </section>
 

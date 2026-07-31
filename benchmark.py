@@ -19,12 +19,20 @@ SUMMARY_OPERATIONS = frozenset(
 
 @dataclass(frozen=True)
 class PiiResult:
-    redacted_text: str
+    """``redacted`` is the same payload type the pipeline runs on — a
+    ``Conversation`` in production, a plain string in tests."""
+
+    redacted: object
     categories: tuple[str, ...]
 
     @property
     def has_pii(self) -> bool:
         return bool(self.categories)
+
+    @property
+    def redacted_text(self) -> str:
+        as_text = getattr(self.redacted, "as_text", None)
+        return as_text() if callable(as_text) else str(self.redacted)
 
 
 @dataclass(frozen=True)
@@ -102,6 +110,17 @@ def records_for_length(characters: int) -> int:
     return math.ceil(characters / 1000) if characters > 0 else 0
 
 
+def payload_characters(payload: object) -> int:
+    """Billable size of whatever a pipeline operates on.
+
+    Conversations know their own UTF-16 size; plain strings are counted here.
+    """
+    counter = getattr(payload, "billable_characters", None)
+    if callable(counter):
+        return counter()
+    return billable_characters(payload)
+
+
 def text_records(text: str) -> int:
     return records_for_length(billable_characters(text))
 
@@ -167,28 +186,30 @@ def _raise_first_failure(futures: Iterable[Future]) -> None:
 class BenchmarkService:
     def __init__(
         self,
-        detect_pii: Callable[[str], PiiResult],
-        summarize: Callable[[str], str],
+        detect_pii: Callable[[object], PiiResult],
+        summarize: Callable[[object], str],
         iterations: int = DEFAULT_ITERATIONS,
+        warm_up_payload: object = WARM_UP_TEXT,
     ) -> None:
         if iterations < 1:
             raise ValueError("iterations must be at least 1.")
         self._detect_pii = detect_pii
         self._summarize = summarize
         self._iterations = iterations
+        self._warm_up_payload = warm_up_payload
 
     @staticmethod
-    def _timed_call(name: str, text: str, operation: Callable[[str], object]):
+    def _timed_call(name: str, payload: object, operation: Callable[[object], object]):
         started = time.perf_counter()
-        result = operation(text)
+        result = operation(payload)
         timing = OperationTiming(
             name=name,
             duration_ms=(time.perf_counter() - started) * 1000,
-            characters=billable_characters(text),
+            characters=payload_characters(payload),
         )
         return result, timing
 
-    def warm_up(self, text: str = WARM_UP_TEXT) -> None:
+    def warm_up(self, payload: object | None = None) -> None:
         """Pay the one-time per-client costs before anything is timed.
 
         Each Azure client caches its bearer token on its own pipeline policy,
@@ -196,15 +217,17 @@ class BenchmarkService:
         subprocess spawn under ``az login``) plus a TLS handshake. Without
         this, whichever pipeline ran first would absorb all of it.
         """
+        if payload is None:
+            payload = self._warm_up_payload
         with ThreadPoolExecutor(max_workers=2) as executor:
             futures = (
-                executor.submit(self._detect_pii, text),
-                executor.submit(self._summarize, text),
+                executor.submit(self._detect_pii, payload),
+                executor.submit(self._summarize, payload),
             )
             wait(futures)
             _raise_first_failure(futures)
 
-    def compare(self, text: str, *, warm_up: bool = True) -> ComparisonResult:
+    def compare(self, payload: object, *, warm_up: bool = True) -> ComparisonResult:
         """Measure both pipelines, alternating which one runs first.
 
         Alternating removes the residual ordering advantage that would
@@ -217,11 +240,11 @@ class BenchmarkService:
         parallel: list[PipelineOutcome] = []
         for index in range(self._iterations):
             if index % 2 == 0:
-                sequential.append(self.run_sequential(text))
-                parallel.append(self.run_parallel(text))
+                sequential.append(self.run_sequential(payload))
+                parallel.append(self.run_parallel(payload))
             else:
-                parallel.append(self.run_parallel(text))
-                sequential.append(self.run_sequential(text))
+                parallel.append(self.run_parallel(payload))
+                sequential.append(self.run_sequential(payload))
 
         return ComparisonResult(
             iterations=self._iterations,
@@ -229,10 +252,12 @@ class BenchmarkService:
             parallel=_aggregate("parallel", parallel),
         )
 
-    def run_sequential(self, text: str) -> PipelineOutcome:
+    def run_sequential(self, payload: object) -> PipelineOutcome:
         started = time.perf_counter()
-        pii_result, pii_timing = self._timed_call(PII_OPERATION, text, self._detect_pii)
-        summary_input = pii_result.redacted_text if pii_result.has_pii else text
+        pii_result, pii_timing = self._timed_call(
+            PII_OPERATION, payload, self._detect_pii
+        )
+        summary_input = pii_result.redacted if pii_result.has_pii else payload
         summary, summary_timing = self._timed_call(
             "summary", summary_input, self._summarize
         )
@@ -246,16 +271,16 @@ class BenchmarkService:
             discarded_speculative_summary=False,
         )
 
-    def run_parallel(self, text: str) -> PipelineOutcome:
+    def run_parallel(self, payload: object) -> PipelineOutcome:
         started = time.perf_counter()
         with ThreadPoolExecutor(max_workers=2) as executor:
             pii_future = executor.submit(
-                self._timed_call, PII_OPERATION, text, self._detect_pii
+                self._timed_call, PII_OPERATION, payload, self._detect_pii
             )
             summary_future = executor.submit(
                 self._timed_call,
                 "speculative_summary",
-                text,
+                payload,
                 self._summarize,
             )
             futures = (pii_future, summary_future)
@@ -269,7 +294,7 @@ class BenchmarkService:
         if discarded:
             summary, redacted_timing = self._timed_call(
                 "redacted_summary",
-                pii_result.redacted_text,
+                pii_result.redacted,
                 self._summarize,
             )
             timings.append(redacted_timing)

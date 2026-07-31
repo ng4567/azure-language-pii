@@ -12,8 +12,13 @@ from azure.core.exceptions import ServiceRequestError
 from fastapi.testclient import TestClient
 
 from benchmark import PiiResult
+from conversation import MAX_TURN_LENGTH, Conversation, Turn
 from main import MAX_TEXT_LENGTH, create_app
 from pricing import PricingUnavailableError, parse_retail_rates
+
+
+def _turns(*texts, role="Customer"):
+    return [{"role": role, "text": text} for text in texts]
 
 
 class FakeLanguageService:
@@ -21,15 +26,21 @@ class FakeLanguageService:
         self.pii_calls = []
         self.summary_calls = []
 
-    def detect_pii(self, text):
-        self.pii_calls.append(text)
-        if "Alice" in text:
-            return PiiResult(text.replace("Alice", "*****"), ("Person",))
-        return PiiResult(text, ())
+    def detect_pii(self, conv):
+        self.pii_calls.append(conv)
+        if "Alice" in conv.as_text():
+            redacted = Conversation(
+                tuple(
+                    Turn(turn.role, turn.text.replace("Alice", "*****"))
+                    for turn in conv.turns
+                )
+            )
+            return PiiResult(redacted, ("Person",))
+        return PiiResult(conv, ())
 
-    def summarize(self, text):
-        self.summary_calls.append(text)
-        return f"Summary of {text}"
+    def summarize(self, conv):
+        self.summary_calls.append(conv)
+        return f"Summary of {conv.as_text()}"
 
     def close(self):
         pass
@@ -73,6 +84,15 @@ class ApiTests(unittest.TestCase):
         samples = response.json()["samples"]
         self.assertEqual(samples["pii"]["characters"], samples["no_pii"]["characters"])
 
+    def test_samples_are_structured_transcripts(self):
+        samples = self.client.get("/api/samples").json()["samples"]
+
+        for sample in samples.values():
+            self.assertGreater(len(sample["conversation"]), 1)
+            for turn in sample["conversation"]:
+                self.assertIn(turn["role"], ("Agent", "Customer"))
+                self.assertTrue(turn["text"])
+
     def test_health_check_does_not_call_azure(self):
         response = self.client.get("/healthz")
 
@@ -84,28 +104,57 @@ class ApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["max_text_length"], MAX_TEXT_LENGTH)
+        self.assertEqual(response.json()["max_turn_length"], MAX_TURN_LENGTH)
+        self.assertEqual(response.json()["roles"], ["Agent", "Customer"])
         self.assertGreaterEqual(response.json()["max_iterations"], 1)
 
-    def test_rejects_empty_and_oversized_text(self):
-        empty = self.client.post("/api/benchmark", json={"text": "   "})
-        oversized = self.client.post(
-            "/api/benchmark", json={"text": "x" * (MAX_TEXT_LENGTH + 1)}
+    def test_rejects_an_empty_conversation_and_blank_turns(self):
+        empty = self.client.post("/api/benchmark", json={"conversation": []})
+        blank = self.client.post(
+            "/api/benchmark", json={"conversation": _turns("   ")}
         )
 
         self.assertEqual(empty.status_code, 400)
-        self.assertEqual(oversized.status_code, 400)
+        self.assertEqual(blank.status_code, 400)
+        self.assertIn("Turn 1", blank.json()["detail"])
 
-    def test_length_guard_counts_utf16_code_units_like_azure_does(self):
-        # 2,501 emoji are 2,501 code points but 5,002 UTF-16 code units.
+    def test_rejects_an_unknown_role(self):
         response = self.client.post(
-            "/api/benchmark", json={"text": "\U0001f600" * 2501}
+            "/api/benchmark",
+            json={"conversation": [{"role": "Bot", "text": "Hello."}]},
+        )
+
+        self.assertEqual(response.status_code, 422)
+
+    def test_rejects_a_turn_over_the_per_turn_limit(self):
+        response = self.client.post(
+            "/api/benchmark",
+            json={"conversation": _turns("x" * (MAX_TURN_LENGTH + 1))},
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("per turn", response.json()["detail"])
+
+    def test_rejects_a_transcript_over_the_total_limit(self):
+        turns = _turns(*["x" * MAX_TURN_LENGTH] * 6)
+
+        response = self.client.post("/api/benchmark", json={"conversation": turns})
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn(f"{MAX_TEXT_LENGTH:,}", response.json()["detail"])
+
+    def test_turn_guard_counts_utf16_code_units_like_azure_does(self):
+        # 501 emoji are 501 code points but 1,002 UTF-16 code units.
+        response = self.client.post(
+            "/api/benchmark", json={"conversation": _turns("\U0001f600" * 501)}
         )
 
         self.assertEqual(response.status_code, 400)
 
     def test_rejects_out_of_range_iteration_counts(self):
         response = self.client.post(
-            "/api/benchmark", json={"text": "Hello.", "iterations": 0}
+            "/api/benchmark",
+            json={"conversation": _turns("Hello."), "iterations": 0},
         )
 
         self.assertEqual(response.status_code, 422)
@@ -113,29 +162,32 @@ class ApiTests(unittest.TestCase):
     def test_benchmark_returns_safe_results_and_costs(self):
         response = self.client.post(
             "/api/benchmark",
-            json={"text": "Contact Alice for support.", "iterations": 1},
+            json={"conversation": _turns("Contact Alice for support."), "iterations": 1},
         )
 
         self.assertEqual(response.status_code, 200)
         payload = response.json()
         self.assertNotIn("Alice", payload["parallel"]["summary"])
+        self.assertNotIn("Alice", payload["parallel"]["redacted_text"])
         self.assertTrue(payload["parallel"]["discarded_speculative_summary"])
         self.assertEqual(payload["parallel"]["cost"]["summary_records"], 2)
         self.assertGreater(payload["sequential"]["total_ms"], 0)
+        self.assertEqual(payload["turns"], 1)
         self.assertEqual(payload["pricing"]["currency"], "USD")
 
     def test_benchmark_warms_up_before_measuring(self):
         self.client.post(
             "/api/benchmark",
-            json={"text": "Contact Alice for support.", "iterations": 1},
+            json={"conversation": _turns("Contact Alice for support."), "iterations": 1},
         )
 
-        self.assertNotEqual(self.language.pii_calls[0], "Contact Alice for support.")
-        self.assertNotEqual(self.language.summary_calls[0], "Contact Alice for support.")
+        self.assertNotIn("Alice", self.language.pii_calls[0].as_text())
+        self.assertNotIn("Alice", self.language.summary_calls[0].as_text())
 
     def test_benchmark_reports_the_spread_across_iterations(self):
         response = self.client.post(
-            "/api/benchmark", json={"text": "Contact Alice.", "iterations": 3}
+            "/api/benchmark",
+            json={"conversation": _turns("Contact Alice."), "iterations": 3},
         )
 
         payload = response.json()
@@ -150,7 +202,8 @@ class ApiTests(unittest.TestCase):
 
     def test_benchmark_includes_a_prevalence_projection(self):
         response = self.client.post(
-            "/api/benchmark", json={"text": "Contact Alice.", "iterations": 1}
+            "/api/benchmark",
+            json={"conversation": _turns("Contact Alice."), "iterations": 1},
         )
 
         projection = response.json()["projection"]
@@ -178,7 +231,9 @@ class ApiTests(unittest.TestCase):
             )
         )
 
-        response = client.post("/api/benchmark", json={"text": "Hello."})
+        response = client.post(
+            "/api/benchmark", json={"conversation": _turns("Hello.")}
+        )
 
         self.assertEqual(response.status_code, 502)
         self.assertIn("retail feed is down", response.json()["detail"])
@@ -186,12 +241,14 @@ class ApiTests(unittest.TestCase):
 
     def test_azure_failure_is_surfaced_as_a_bad_gateway(self):
         class BrokenLanguageService(FakeLanguageService):
-            def summarize(self, text):
+            def summarize(self, conv):
                 raise RuntimeError("summarization exploded")
 
         client = TestClient(create_app(BrokenLanguageService(), FakePricing()))
 
-        response = client.post("/api/benchmark", json={"text": "Hello."})
+        response = client.post(
+            "/api/benchmark", json={"conversation": _turns("Hello.")}
+        )
 
         self.assertEqual(response.status_code, 502)
         self.assertIn("Azure benchmark failed", response.json()["detail"])
@@ -200,12 +257,14 @@ class ApiTests(unittest.TestCase):
         """ServiceRequestError is an AzureError but not an HttpResponseError."""
 
         class UnreachableLanguageService(FakeLanguageService):
-            def detect_pii(self, text):
+            def detect_pii(self, conv):
                 raise ServiceRequestError("connection refused")
 
         client = TestClient(create_app(UnreachableLanguageService(), FakePricing()))
 
-        response = client.post("/api/benchmark", json={"text": "Hello."})
+        response = client.post(
+            "/api/benchmark", json={"conversation": _turns("Hello.")}
+        )
 
         self.assertEqual(response.status_code, 502)
         self.assertIn("Azure benchmark failed", response.json()["detail"])
