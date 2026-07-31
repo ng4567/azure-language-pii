@@ -255,3 +255,28 @@ Official references:
 ```bash
 uv run python -m unittest discover -v
 ```
+
+## Why the pipeline re-summarizes instead of sanitizing the summary
+
+When PII is detected, the speculative summary is discarded and the **redacted
+transcript is summarized again**. The summary itself is never passed back
+through redaction. Sanitizing the summary would be cheaper — one PII call at
+$0.001 instead of a second summarization at $0.002, so $0.004 rather than
+$0.005 per transcript containing PII — and it is still the wrong trade.
+
+Two reasons, one measured and one structural:
+
+- **Short inputs redact badly.** A single low-context utterance,
+  `Maya Chen, card 4111 1111 1111 1111.`, comes back as
+  `**** Chen, card ********* 1111 ****.` — the surname survives and the card
+  number is only partially masked. This is deterministic and identical on
+  `2024-05-01`, `2024-11-01` and `2025-11-15-preview`, so it is not fixable by
+  changing API version. A two-sentence summary is exactly this case. Partial
+  masking is worse than a clean miss, because it looks redacted.
+- **Summarization is abstractive.** The output paraphrases rather than quoting,
+  so PII can be restated in forms that carry no matching span for a detector to
+  find at all.
+
+Re-summarizing redacted input makes the summary PII-free because its *input*
+was — not because a second detector caught everything in a short string. The
+guarantee comes from the data flow rather than from detection recall.
