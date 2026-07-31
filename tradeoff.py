@@ -1,8 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+from statistics import median
 
-from benchmark import PipelineResult, records_for_length
+from benchmark import (
+    PII_OPERATION,
+    ComparisonResult,
+    PipelineOutcome,
+    records_for_length,
+)
 from pricing import RetailRates
 
 # 0%, 5%, ... 100%
@@ -14,9 +20,18 @@ CURVE_POINTS = int(round(1 / CURVE_STEP)) + 1
 class PipelinePrimitives:
     """Measured building blocks the projection is derived from.
 
+    Each value is derived per iteration and then reduced with a median, so
+    every one describes runs that actually happened.
+
     ``overlapped_ms`` is the measured wall time of the concurrent PII +
     speculative-summary phase, so it already includes real thread and
     connection contention rather than an idealised ``max()``.
+
+    ``pii_ms`` averages both pipelines' PII calls, since both measure the same
+    operation and two samples per iteration beat one. That makes it an
+    estimate of the service, not a component of the parallel run, so it is not
+    bounded by ``overlapped_ms`` and can exceed it slightly when the
+    sequential pipeline happens to draw slower PII calls.
     """
 
     pii_ms: float
@@ -60,48 +75,72 @@ class TradeoffProjection:
         return asdict(self)
 
 
-def _mean_summary_ms(*results: PipelineResult) -> float:
-    durations = [
+def _iteration_primitives(
+    sequential: PipelineOutcome, parallel: PipelineOutcome
+) -> tuple[float, float, float, float]:
+    """The four latency primitives for one paired iteration.
+
+    Deriving these per iteration and taking medians afterwards keeps the
+    physical relationships intact. Subtracting one aggregate from another
+    could place the overlapped phase below the PII call it contains, which no
+    single execution can do.
+    """
+    pii_durations = [
         operation.duration_ms
-        for result in results
-        for operation in result.operations
-        if operation.name != "pii"
+        for outcome in (sequential, parallel)
+        for operation in outcome.operations
+        if operation.name == PII_OPERATION
     ]
-    if not durations:
-        return 0.0
-    return sum(durations) / len(durations)
-
-
-def derive_primitives(
-    sequential: PipelineResult, parallel: PipelineResult
-) -> PipelinePrimitives:
-    pii_timings = [
-        operation
-        for result in (sequential, parallel)
-        for operation in result.operations
-        if operation.name == "pii"
+    summary_durations = [
+        operation.duration_ms
+        for outcome in (sequential, parallel)
+        for operation in outcome.operations
+        if operation.name != PII_OPERATION
     ]
-    pii_ms = (
-        sum(timing.duration_ms for timing in pii_timings) / len(pii_timings)
-        if pii_timings
-        else 0.0
+    retry_ms = next(
+        (
+            operation.duration_ms
+            for operation in parallel.operations
+            if operation.name == "redacted_summary"
+        ),
+        0.0,
     )
-    pii_characters = pii_timings[-1].characters if pii_timings else 0
+    return (
+        sum(pii_durations) / len(pii_durations) if pii_durations else 0.0,
+        sum(summary_durations) / len(summary_durations) if summary_durations else 0.0,
+        max(parallel.total_ms - retry_ms, 0.0),
+        sequential.total_ms,
+    )
 
-    summary_ms = _mean_summary_ms(sequential, parallel)
-    summary_timing = sequential.operation("summary")
-    summary_characters = summary_timing.characters if summary_timing else pii_characters
 
-    # Strip the conditional second summarization to recover the cost of the
-    # overlapped phase alone.
-    redacted = parallel.operation("redacted_summary")
-    overlapped_ms = parallel.total_ms - (redacted.duration_ms if redacted else 0.0)
+def _characters(outcome: PipelineOutcome, name: str) -> int:
+    for operation in outcome.operations:
+        if operation.name == name:
+            return operation.characters
+    return 0
+
+
+def derive_primitives(comparison: ComparisonResult) -> PipelinePrimitives:
+    pairs = list(
+        zip(comparison.sequential_outcomes, comparison.parallel_outcomes)
+    )
+    if not pairs:
+        raise ValueError("The comparison carries no per-iteration outcomes.")
+
+    per_iteration = [_iteration_primitives(s, p) for s, p in pairs]
+    pii_ms, summary_ms, overlapped_ms, sequential_ms = (
+        median(values[index] for values in per_iteration) for index in range(4)
+    )
+
+    latest_sequential = comparison.sequential_outcomes[-1]
+    pii_characters = _characters(latest_sequential, PII_OPERATION)
+    summary_characters = _characters(latest_sequential, "summary") or pii_characters
 
     return PipelinePrimitives(
         pii_ms=pii_ms,
         summary_ms=summary_ms,
-        overlapped_ms=max(overlapped_ms, 0.0),
-        sequential_ms=sequential.total_ms,
+        overlapped_ms=overlapped_ms,
+        sequential_ms=sequential_ms,
         pii_records=records_for_length(pii_characters),
         summary_records=records_for_length(summary_characters),
     )
@@ -121,11 +160,9 @@ def break_even_pii_rate(primitives: PipelinePrimitives) -> float | None:
 
 
 def project(
-    sequential: PipelineResult,
-    parallel: PipelineResult,
-    rates: RetailRates,
+    comparison: ComparisonResult, rates: RetailRates
 ) -> TradeoffProjection:
-    primitives = derive_primitives(sequential, parallel)
+    primitives = derive_primitives(comparison)
 
     sequential_usd = (
         primitives.pii_records * rates.pii_per_record_usd

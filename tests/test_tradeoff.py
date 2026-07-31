@@ -1,6 +1,11 @@
 import unittest
 
-from benchmark import OperationTiming, PipelineResult
+from benchmark import (
+    ComparisonResult,
+    OperationTiming,
+    PipelineOutcome,
+    _aggregate,
+)
 from pricing import parse_retail_rates
 from tradeoff import break_even_pii_rate, derive_primitives, project
 
@@ -23,49 +28,51 @@ RATES = parse_retail_rates(
 )
 
 
-def _result(mode, total_ms, operations, **overrides):
+def _outcome(total_ms, operations, **overrides):
     defaults = dict(
-        mode=mode,
-        iterations=3,
-        total_ms=total_ms,
-        p95_ms=total_ms,
-        min_ms=total_ms,
-        max_ms=total_ms,
-        samples_ms=(total_ms,),
         has_pii=True,
         pii_categories=("Person",),
         redacted_text="*" * 500,
         summary="Safe",
+        total_ms=total_ms,
         operations=operations,
         discarded_speculative_summary=True,
     )
     defaults.update(overrides)
-    return PipelineResult(**defaults)
+    return PipelineOutcome(**defaults)
 
 
-# PII takes 100 ms, each summarization 400 ms.
-SEQUENTIAL = _result(
-    "sequential",
-    500,
-    (
-        OperationTiming("pii", 100, 500),
-        OperationTiming("summary", 400, 500),
-    ),
+def _comparison(sequential_outcomes, parallel_outcomes):
+    return ComparisonResult(
+        iterations=len(sequential_outcomes),
+        sequential=_aggregate("sequential", sequential_outcomes),
+        parallel=_aggregate("parallel", parallel_outcomes),
+        sequential_outcomes=tuple(sequential_outcomes),
+        parallel_outcomes=tuple(parallel_outcomes),
+    )
+
+
+SEQUENTIAL_OPS = (
+    OperationTiming("pii", 100, 500),
+    OperationTiming("summary", 400, 500),
 )
-PARALLEL = _result(
-    "parallel",
-    810,
-    (
-        OperationTiming("pii", 100, 500),
-        OperationTiming("speculative_summary", 400, 500),
-        OperationTiming("redacted_summary", 400, 500),
-    ),
+PARALLEL_OPS = (
+    OperationTiming("pii", 100, 500),
+    OperationTiming("speculative_summary", 400, 500),
+    OperationTiming("redacted_summary", 400, 500),
 )
+
+
+def _default_comparison():
+    return _comparison(
+        [_outcome(500, SEQUENTIAL_OPS, discarded_speculative_summary=False)],
+        [_outcome(810, PARALLEL_OPS)],
+    )
 
 
 class PrimitiveTests(unittest.TestCase):
     def test_strips_the_conditional_retry_from_the_overlapped_phase(self):
-        primitives = derive_primitives(SEQUENTIAL, PARALLEL)
+        primitives = derive_primitives(_default_comparison())
 
         self.assertAlmostEqual(primitives.overlapped_ms, 410)
         self.assertAlmostEqual(primitives.sequential_ms, 500)
@@ -75,8 +82,7 @@ class PrimitiveTests(unittest.TestCase):
         self.assertEqual(primitives.summary_records, 1)
 
     def test_overlapped_phase_is_the_whole_run_when_no_retry_happened(self):
-        parallel = _result(
-            "parallel",
+        parallel = _outcome(
             420,
             (
                 OperationTiming("pii", 100, 500),
@@ -87,41 +93,80 @@ class PrimitiveTests(unittest.TestCase):
             discarded_speculative_summary=False,
         )
 
-        primitives = derive_primitives(SEQUENTIAL, parallel)
+        primitives = derive_primitives(
+            _comparison(
+                [_outcome(500, SEQUENTIAL_OPS, discarded_speculative_summary=False)],
+                [parallel],
+            )
+        )
 
         self.assertAlmostEqual(primitives.overlapped_ms, 420)
+
+    def test_overlapped_phase_is_a_median_of_per_iteration_values(self):
+        """Regression: the overlapped phase was a difference of aggregates.
+
+        It used to be ``median(parallel totals) - median(retry durations)``.
+        When the two are not ranked alike across iterations that combination
+        describes no run that actually happened. Here the true per-iteration
+        overlapped phases are 4000, 500 and 3500 (median 3500), while
+        subtracting aggregates gives 4000 - 1000 = 3000.
+        """
+        def parallel_at(total, retry):
+            return _outcome(
+                total,
+                (
+                    OperationTiming("pii", 100, 500),
+                    OperationTiming("speculative_summary", 400, 500),
+                    OperationTiming("redacted_summary", retry, 500),
+                ),
+            )
+
+        sequential = [
+            _outcome(500, SEQUENTIAL_OPS, discarded_speculative_summary=False)
+            for _ in range(3)
+        ]
+        parallel = [
+            parallel_at(5000, 1000),
+            parallel_at(3000, 2500),
+            parallel_at(4000, 500),
+        ]
+
+        primitives = derive_primitives(_comparison(sequential, parallel))
+
+        self.assertAlmostEqual(primitives.overlapped_ms, 3500)
 
 
 class BreakEvenTests(unittest.TestCase):
     def test_break_even_is_where_the_saving_equals_the_retry_cost(self):
-        primitives = derive_primitives(SEQUENTIAL, PARALLEL)
+        primitives = derive_primitives(_default_comparison())
 
         # Saves 90 ms per clean doc, pays 400 ms per dirty one: 90/400.
         self.assertAlmostEqual(break_even_pii_rate(primitives), 0.225)
 
     def test_break_even_is_clamped_to_a_probability(self):
-        parallel = _result(
-            "parallel",
-            5000,
-            (
-                OperationTiming("pii", 100, 500),
-                OperationTiming("speculative_summary", 400, 500),
-                OperationTiming("redacted_summary", 400, 500),
-            ),
+        parallel = _outcome(5000, PARALLEL_OPS)
+
+        primitives = derive_primitives(
+            _comparison(
+                [_outcome(500, SEQUENTIAL_OPS, discarded_speculative_summary=False)],
+                [parallel],
+            )
         )
 
-        self.assertEqual(break_even_pii_rate(derive_primitives(SEQUENTIAL, parallel)), 0.0)
+        self.assertEqual(break_even_pii_rate(primitives), 0.0)
 
     def test_break_even_is_unavailable_without_a_summary_measurement(self):
-        sequential = _result("sequential", 100, (OperationTiming("pii", 100, 500),))
-        parallel = _result("parallel", 100, (OperationTiming("pii", 100, 500),))
+        pii_only = (OperationTiming("pii", 100, 500),)
+        primitives = derive_primitives(
+            _comparison([_outcome(100, pii_only)], [_outcome(100, pii_only)])
+        )
 
-        self.assertIsNone(break_even_pii_rate(derive_primitives(sequential, parallel)))
+        self.assertIsNone(break_even_pii_rate(primitives))
 
 
 class ProjectionTests(unittest.TestCase):
     def setUp(self):
-        self.projection = project(SEQUENTIAL, PARALLEL, RATES)
+        self.projection = project(_default_comparison(), RATES)
 
     def test_curve_spans_zero_to_full_prevalence(self):
         rates = [point.pii_rate for point in self.projection.curve]

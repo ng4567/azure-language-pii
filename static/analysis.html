@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Findings · PII Pipeline Lab</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <main>
+    <header class="hero">
+      <div>
+        <p class="eyebrow">Azure AI Language · Measured findings</p>
+        <h1>Run them<br><span>in parallel.</span></h1>
+        <p class="lede">Speculative parallel execution was never slower than redact-first in 20 paired runs, and saved 2.3 seconds per transcript whenever the transcript was clean. The only price is a second summarization on the transcripts that actually contain PII.</p>
+      </div>
+      <div class="hero-badge">
+        <span class="pulse"></span>
+        <div><strong>n = 40 pipeline runs</strong><small>live eastus2 · GA API</small></div>
+      </div>
+    </header>
+
+    <nav class="page-nav">
+      <a href="/">← Dashboard</a>
+      <a href="/api-docs">HTTP API</a>
+      <a href="/docs" target="_blank" rel="noreferrer">Swagger ↗</a>
+    </nav>
+
+    <section class="panel verdict-panel">
+      <p class="step">THE RECOMMENDATION</p>
+      <h2>Use speculative parallel — if un-redacted text may reach the summarizer</h2>
+      <p class="projection-lede">Conversation PII and conversation summarization take almost exactly the same time on this resource (~2.27&nbsp;s each). That single fact decides the architecture: the speculative summary runs <em>entirely inside the shadow</em> of the PII call, so it costs nothing in latency. Parallel therefore wins on every clean transcript and merely ties on dirty ones. It is not a latency-versus-cost trade any more — latency favours parallel at every prevalence, and the only question left is whether the extra summarization is worth its money.</p>
+      <div class="verdict-grid">
+        <div class="verdict yes">
+          <strong>If PII may transit the summarizer inside your tenant</strong>
+          <p>Choose <b>speculative parallel</b>. Up to 2.3&nbsp;s faster per transcript, never slower, and you pay for a second summarization only on transcripts that contain PII.</p>
+        </div>
+        <div class="verdict no">
+          <strong>If the summarizer must never receive PII</strong>
+          <p>Stay <b>sequential</b>. The guarantee is worth roughly 2.3&nbsp;s per clean transcript — a real cost, but the only design that keeps un-redacted text away from the summarization endpoint entirely.</p>
+        </div>
+      </div>
+      <p class="footnote">This is the open question from the customer thread. Speculative parallel sends the raw transcript to the summarization endpoint on every request; the unsafe summary is discarded server-side and never returned, but the text does reach Azure. Everything stays inside the Azure boundary — whether that satisfies the PCI scope is the decision to confirm before adopting parallel.</p>
+    </section>
+
+    <section class="panel">
+      <p class="step">EVIDENCE · LATENCY</p>
+      <h2>Measured, 10 iterations per fixture</h2>
+      <p class="projection-lede">Both fixtures are 6-turn, 596-character transcripts of equal length. Pipelines alternate order across iterations and an untimed warm-up absorbs token acquisition, so neither side carries a systematic advantage.</p>
+
+      <div class="chart-block">
+        <div class="chart-row-label">Clean transcript — no PII present</div>
+        <div class="hbar"><div class="hbar-fill sequential" style="width:100%"><span>Sequential 4,617 ms</span></div></div>
+        <div class="hbar"><div class="hbar-fill parallel" style="width:49.3%"><span>Parallel 2,277 ms</span></div></div>
+        <p class="chart-note"><b>2.03× faster</b> · parallel won <b>10 of 10</b> paired iterations · identical cost ($0.0030)</p>
+      </div>
+
+      <div class="chart-block">
+        <div class="chart-row-label">Dirty transcript — PII present, speculative summary discarded</div>
+        <div class="hbar"><div class="hbar-fill sequential" style="width:99.9%"><span>Sequential 4,545 ms</span></div></div>
+        <div class="hbar"><div class="hbar-fill parallel" style="width:100%"><span>Parallel 4,551 ms</span></div></div>
+        <p class="chart-note"><b>A statistical tie</b> · median paired difference 14 ms · parallel won 6 of 10 · costs $0.0050 vs $0.0030</p>
+      </div>
+
+      <div class="table-scroll">
+        <table class="api-table">
+          <thead><tr><th>Primitive</th><th>Clean</th><th>Dirty</th></tr></thead>
+          <tbody>
+            <tr><td>Conversation PII call</td><td>2,292 ms</td><td>2,266 ms</td></tr>
+            <tr><td>Conversation summarization call</td><td>2,269 ms</td><td>2,277 ms</td></tr>
+            <tr><td>Overlapped phase (PII ∥ speculative summary)</td><td>2,277 ms</td><td>2,280 ms</td></tr>
+            <tr><td>Sequential total</td><td>4,617 ms</td><td>4,545 ms</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="footnote">The overlapped phase costs the same as one call, not two — that is the whole finding. Both skills are asynchronous jobs polled at 1&nbsp;s, so these are submit-plus-poll wall times with a poll-cadence floor, not pure inference times.</p>
+    </section>
+
+    <section class="panel">
+      <p class="step">EVIDENCE · THE TRADE ACROSS YOUR CORPUS</p>
+      <h2>What it costs, at your PII prevalence</h2>
+      <p class="projection-lede">A single transcript is one point. What decides the economics is <b>p</b>, the fraction of transcripts containing any PII, because that is how often the speculative summary is thrown away and paid for twice.</p>
+
+      <div class="table-scroll">
+        <table class="api-table">
+          <thead><tr><th>p — transcripts with PII</th><th>Sequential</th><th>Parallel</th><th>Latency saved</th><th>Extra cost / 1M transcripts</th></tr></thead>
+          <tbody>
+            <tr><td>0%</td><td>4,617 ms</td><td>2,277 ms</td><td class="good">2,340 ms</td><td>$0</td></tr>
+            <tr><td>10%</td><td>4,617 ms</td><td>2,504 ms</td><td class="good">2,113 ms</td><td>$200</td></tr>
+            <tr><td>25%</td><td>4,617 ms</td><td>2,844 ms</td><td class="good">1,773 ms</td><td>$500</td></tr>
+            <tr><td>50%</td><td>4,617 ms</td><td>3,412 ms</td><td class="good">1,206 ms</td><td>$1,000</td></tr>
+            <tr><td>75%</td><td>4,617 ms</td><td>3,979 ms</td><td class="good">638 ms</td><td>$1,500</td></tr>
+            <tr><td>100%</td><td>4,617 ms</td><td>4,547 ms</td><td class="good">71 ms</td><td>$2,000</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="footnote">Latency saved stays positive across the whole range — the measured break-even sits at <b>p ≈ 0.99–1.00</b>, meaning there is no prevalence at which redact-first becomes the faster design. Extra cost is bounded at <b>$0.002 per transcript</b>, charged only on transcripts that contain PII. Text-record pricing means a 596-character transcript and a 1,000-character one cost the same, so longer transcripts change these figures.</p>
+    </section>
+
+    <section class="panel">
+      <p class="step">EVIDENCE · REDACTION QUALITY</p>
+      <h2>Does it catch what it needs to?</h2>
+      <p class="projection-lede">Ten hand-labelled transcripts, 41 labelled spans, scored on whether a labelled value survived verbatim in the redacted output — the actual requirement, not span overlap.</p>
+      <div class="projection-grid">
+        <div><span>GA · default categories</span><strong>98% recall · <b class="warn">1 leak</b></strong></div>
+        <div><span>Preview · explicit categories</span><strong class="good">100% recall · 0 leaks</strong></div>
+        <div><span>Spoken-digit card numbers</span><strong class="good">Detected</strong></div>
+      </div>
+
+      <ul class="plain-list">
+        <li><strong class="warn">Dates of birth are not redacted on the GA API.</strong> <code>DateOfBirth</code> is preview-only and is rejected outright as a category value on <code>2024-11-01</code>. An identity-verification call that reads a date of birth aloud leaks it. Opting into <code>2025-11-15-preview</code> fixes it at confidence 1.0, at the price of accepting Microsoft's preview terms.</li>
+        <li><strong>Spoken digits are handled.</strong> <code>"four one one one, one one one one…"</code> is caught as <code>CreditCard</code>, as are spoken expiry dates. A speech pipeline without inverse text normalisation does not defeat detection — the main worry going in, and it did not materialise.</li>
+        <li><strong>Last-four references are over-redacted.</strong> <code>"the card ending in 4242"</code> is masked despite PCI DSS permitting it. This compounds: the parallel pipeline discards on <em>any</em> detection, so a permitted last-four reference alone makes a transcript count as dirty, inflating effective <b>p</b> and cost.</li>
+        <li><strong>Short turns near card numbers get swallowed.</strong> Agent backchannels like <code>"Got it."</code> and <code>"Mhm."</code> were labelled <code>CreditCard</code> at 0.74–0.86 confidence and fully masked. Nothing leaked, but six of nine turns disappeared, leaving the summarizer far less to work with. A confidence floor on short turns would recover most of it.</li>
+        <li><strong>Never send isolated utterances.</strong> One turn with no surrounding context redacts badly — a surname survives and a card number is only partially masked, which looks redacted but is not. Send whole conversations.</li>
+      </ul>
+    </section>
+
+    <section class="panel">
+      <p class="step">WHAT WOULD CHANGE THIS</p>
+      <h2>Honest limits</h2>
+      <ul class="plain-list">
+        <li>Both fixtures are ~600 characters. Real transcripts are far longer, and summarization time grows with input while the PII call may not — if the two stop being equal, the speculative summary stops being free and this recommendation weakens. <b>Re-run this on production-length transcripts before committing.</b></li>
+        <li>Ten synthetic transcripts is enough to find categorical gaps like the date-of-birth one. It is not enough to estimate a leak rate, and it says nothing about how common each pattern is in real traffic.</li>
+        <li>All measurements come from one Standard-tier resource in eastus2 under no competing load. Latency under production concurrency, and across the three regions in use, is unmeasured.</li>
+        <li>The prevalence sweep assumes transcripts resembling the ones measured. <b>p</b> is not independent of length: longer transcripts are likelier to contain an entity.</li>
+      </ul>
+    </section>
+
+    <footer>
+      <div>
+        <strong>Reproduce it</strong>
+        <p>Run the comparison yourself from the <a href="/">dashboard</a>, or score redaction against the labelled set with <code>uv run python evaluation/evaluate.py</code>.</p>
+      </div>
+      <div class="source-links">
+        <a href="/">Run the benchmark ↗</a>
+        <a href="/api-docs">Call it over HTTP ↗</a>
+      </div>
+    </footer>
+  </main>
+</body>
+</html>
