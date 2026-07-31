@@ -60,7 +60,7 @@ class TradeoffProjection:
         return asdict(self)
 
 
-def _median_summary_ms(*results: PipelineResult) -> float:
+def _mean_summary_ms(*results: PipelineResult) -> float:
     durations = [
         operation.duration_ms
         for result in results
@@ -88,7 +88,7 @@ def derive_primitives(
     )
     pii_characters = pii_timings[-1].characters if pii_timings else 0
 
-    summary_ms = _median_summary_ms(sequential, parallel)
+    summary_ms = _mean_summary_ms(sequential, parallel)
     summary_timing = sequential.operation("summary")
     summary_characters = summary_timing.characters if summary_timing else pii_characters
 

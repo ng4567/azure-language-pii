@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from functools import lru_cache
 from pathlib import Path
 
-from azure.core.exceptions import HttpResponseError
+from azure.core.exceptions import AzureError
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
@@ -40,7 +40,7 @@ def _load_samples() -> dict[str, dict[str, str | int]]:
         ("pii", "PII.txt", "PII sample"),
         ("no_pii", "No PII.txt", "No-PII sample"),
     ):
-        content = (ROOT / "samples" / filename).read_text().strip()
+        content = (ROOT / "samples" / filename).read_text(encoding="utf-8").strip()
         samples[key] = {
             "label": label,
             "filename": filename,
@@ -140,9 +140,11 @@ def create_app(language_service=None, pricing_service=None) -> FastAPI:
             application.state.language.summarize,
             iterations=request.iterations,
         )
+        # AzureError also covers the transport failures (ServiceRequestError,
+        # ServiceResponseError) that HttpResponseError does not.
         try:
             comparison = service.compare(text, warm_up=request.warm_up)
-        except (HttpResponseError, RuntimeError) as error:
+        except (AzureError, RuntimeError) as error:
             raise HTTPException(
                 status_code=502,
                 detail=f"Azure benchmark failed: {error}",
