@@ -90,6 +90,32 @@ leaks, but the transcript is degraded and the summary has far less to work
 with. Low-confidence detections on short turns are the pattern to watch; a
 confidence floor applied to short turns would recover most of it.
 
+### Single-turn requests are redacted badly
+
+Every transcript here is multi-turn, and that turns out to matter. Sending one
+turn with no conversational context around it degrades redaction sharply:
+
+```
+input   Customer: Maya Chen, card 4111 1111 1111 1111.
+output  Customer: **** Chen, card ********* 1111 ****.
+```
+
+The surname survives and the card number is only partially masked. Prepending
+a single agent turn (`"Who am I speaking with, and what card are you paying
+with today?"`) fixes it completely — `*********, **** *******************.`
+
+This is deterministic across repeated calls and **identical on
+`2024-05-01`, `2024-11-01` and `2025-11-15-preview`**, so it is not an API
+version issue and opting into preview does not help. It is not in the gating
+datasets because it would make the scorer fail permanently; it is recorded
+here instead.
+
+The practical consequence: do not call `/api/redact` with isolated utterances
+and conclude from the result that redaction works. Send the surrounding turns.
+Production transcripts are multi-turn, so this is mainly a hazard when
+spot-checking the API by hand — but partial masking of a card number is a
+worse failure than a clean miss, because it looks redacted.
+
 ### Category naming
 
 Span recall is 100% on preview but category agreement is 93%. The gaps are
