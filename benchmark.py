@@ -18,12 +18,29 @@ SUMMARY_OPERATIONS = frozenset(
 
 
 @dataclass(frozen=True)
+class PiiEntity:
+    """One detected span.
+
+    The matched text is deliberately absent: it is the PII value itself, and
+    callers already hold the input it was found in. Offset and length are
+    UTF-16 code units within the turn, matching how the service reports them.
+    """
+
+    turn: int
+    category: str
+    offset: int
+    length: int
+    confidence_score: float
+
+
+@dataclass(frozen=True)
 class PiiResult:
     """``redacted`` is the same payload type the pipeline runs on — a
     ``Conversation`` in production, a plain string in tests."""
 
     redacted: object
     categories: tuple[str, ...]
+    entities: tuple[PiiEntity, ...] = ()
 
     @property
     def has_pii(self) -> bool:
@@ -123,6 +140,11 @@ def payload_characters(payload: object) -> int:
 
 def text_records(text: str) -> int:
     return records_for_length(billable_characters(text))
+
+
+def text_records_for_conversation(payload: object) -> int:
+    """Billable records for one operation over ``payload``."""
+    return records_for_length(payload_characters(payload))
 
 
 def percentile(values: Sequence[float], fraction: float) -> float:

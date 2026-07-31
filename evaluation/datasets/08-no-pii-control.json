@@ -1,0 +1,14 @@
+{
+  "id": "08-no-pii-control",
+  "scenario": "Pure technical troubleshooting call with no personal data at all.",
+  "notes": "Negative control for false positives. Any detection here is over-redaction on a transcript that should pass through untouched, and would push a speculative-parallel pipeline into an unnecessary re-summarization.",
+  "conversation": [
+    {"role": "Agent", "text": "Thanks for holding. What seems to be happening with the connection?"},
+    {"role": "Customer", "text": "The modem drops out every evening around eight and comes back a few minutes later."},
+    {"role": "Agent", "text": "I'm seeing repeated upstream errors on the line. That usually points to a signal issue outside the home."},
+    {"role": "Customer", "text": "Is that something you can fix remotely or does someone need to come out?"},
+    {"role": "Agent", "text": "I've rebooted the equipment from here and scheduled a line check. If it drops again tomorrow, a technician visit is the next step."},
+    {"role": "Customer", "text": "That works. I'll keep an eye on it tonight and call back if nothing changes."}
+  ],
+  "expected": []
+}

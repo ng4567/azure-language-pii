@@ -1,0 +1,30 @@
+{
+  "id": "10-long-mixed-transcript",
+  "scenario": "Full-length service call: verification, a move request, and a card payment.",
+  "notes": "Density and length test. Multiple categories across many turns, closest in shape to a real production transcript.",
+  "conversation": [
+    {"role": "Agent", "text": "Thank you for calling, this is Priya. Can I start with your name and the phone number on the account?"},
+    {"role": "Customer", "text": "It's Marcus Webb, and the number is 415-555-0192."},
+    {"role": "Agent", "text": "Thank you Marcus. And for security, what's the service address currently on file?"},
+    {"role": "Customer", "text": "1600 Pennsylvania Avenue, Apartment 3B, Sacramento, CA 95814."},
+    {"role": "Agent", "text": "That matches. How can I help today?"},
+    {"role": "Customer", "text": "I'm moving on the fifteenth and I need to transfer service to 88 Market Street, San Francisco, CA 94103."},
+    {"role": "Agent", "text": "I can schedule the transfer. There's an outstanding balance of eighty-two dollars that needs to clear first."},
+    {"role": "Customer", "text": "Let's pay it now. Card is 5500 0000 0000 0004, expiry 09/27, and the code is 456."},
+    {"role": "Agent", "text": "That's approved. I'll send confirmation of both the payment and the transfer."},
+    {"role": "Customer", "text": "Send it to marcus.webb@example.com please, not the old address."},
+    {"role": "Agent", "text": "Sent. Your service will be active at the new address on the fifteenth."}
+  ],
+  "expected": [
+    {"turn": 1, "text": "Priya", "category": "Person"},
+    {"turn": 2, "text": "Marcus Webb", "category": "Person"},
+    {"turn": 2, "text": "415-555-0192", "category": "Phone"},
+    {"turn": 3, "text": "Marcus", "category": "Person"},
+    {"turn": 4, "text": "1600 Pennsylvania Avenue, Apartment 3B, Sacramento, CA 95814", "category": "Address"},
+    {"turn": 6, "text": "88 Market Street, San Francisco, CA 94103", "category": "Address"},
+    {"turn": 8, "text": "5500 0000 0000 0004", "category": "CreditCard"},
+    {"turn": 8, "text": "09/27", "category": "CreditCard"},
+    {"turn": 8, "text": "456", "category": "CreditCard"},
+    {"turn": 10, "text": "marcus.webb@example.com", "category": "Email"}
+  ]
+}

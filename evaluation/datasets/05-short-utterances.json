@@ -1,0 +1,19 @@
+{
+  "id": "05-short-utterances",
+  "scenario": "Clipped, low-context turns typical of a rushed verification exchange.",
+  "notes": "Probes the context-sensitivity hypothesis: the same entities that are caught inside full sentences may be missed when a turn is a bare fragment.",
+  "conversation": [
+    {"role": "Agent", "text": "Name?"},
+    {"role": "Customer", "text": "Maya Chen."},
+    {"role": "Agent", "text": "Number?"},
+    {"role": "Customer", "text": "206-555-0148."},
+    {"role": "Agent", "text": "Card?"},
+    {"role": "Customer", "text": "4111 1111 1111 1111."},
+    {"role": "Agent", "text": "Thanks."}
+  ],
+  "expected": [
+    {"turn": 2, "text": "Maya Chen", "category": "Person"},
+    {"turn": 4, "text": "206-555-0148", "category": "Phone"},
+    {"turn": 6, "text": "4111 1111 1111 1111", "category": "CreditCard"}
+  ]
+}

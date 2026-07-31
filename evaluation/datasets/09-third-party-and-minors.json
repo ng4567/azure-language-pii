@@ -1,0 +1,18 @@
+{
+  "id": "09-third-party-and-minors",
+  "scenario": "Account holder adds an authorised user and mentions a child on the account.",
+  "notes": "PII belonging to people who are not the caller. A pipeline that anchors on the verified account holder can miss third-party names entirely.",
+  "conversation": [
+    {"role": "Customer", "text": "I'd like to add my wife to the account. Her name is Elena Petrova and her mobile is (312) 555-0173."},
+    {"role": "Agent", "text": "I can add her as an authorised user. Does she need her own login?"},
+    {"role": "Customer", "text": "Yes, send it to elena.petrova@example.net. Also my son Tomas is 14, he uses the tablet line."},
+    {"role": "Agent", "text": "Noted. I've added her and flagged the tablet line for the parental controls package."}
+  ],
+  "expected": [
+    {"turn": 1, "text": "Elena Petrova", "category": "Person"},
+    {"turn": 1, "text": "(312) 555-0173", "category": "Phone"},
+    {"turn": 3, "text": "elena.petrova@example.net", "category": "Email"},
+    {"turn": 3, "text": "Tomas", "category": "Person"},
+    {"turn": 3, "text": "14", "category": "Age"}
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "id": "01-billing-dispute-card",
+  "scenario": "Customer disputes a charge and pays the outstanding balance by card.",
+  "notes": "Baseline. Well-formed entities inside full-sentence turns, which is the easiest case for the model.",
+  "conversation": [
+    {"role": "Agent", "text": "Thank you for calling billing support, my name is Daniel. Who am I speaking with today?"},
+    {"role": "Customer", "text": "Hi Daniel, this is Maya Chen. I'm calling about a charge on my account I don't recognize."},
+    {"role": "Agent", "text": "I can help with that. Could you confirm the phone number and email address on the account?"},
+    {"role": "Customer", "text": "Sure, the number is 206-555-0148 and the email is maya.chen@example.com."},
+    {"role": "Agent", "text": "Thank you. I see a duplicate equipment fee of forty dollars. I've submitted a credit for that."},
+    {"role": "Customer", "text": "Great. I'd like to pay the remaining balance now with my Visa, 4111 1111 1111 1111, expiry 04/28."},
+    {"role": "Agent", "text": "That payment went through. You'll see the credit on your next statement."}
+  ],
+  "expected": [
+    {"turn": 1, "text": "Daniel", "category": "Person"},
+    {"turn": 2, "text": "Daniel", "category": "Person"},
+    {"turn": 2, "text": "Maya Chen", "category": "Person"},
+    {"turn": 4, "text": "206-555-0148", "category": "Phone"},
+    {"turn": 4, "text": "maya.chen@example.com", "category": "Email"},
+    {"turn": 6, "text": "4111 1111 1111 1111", "category": "CreditCard"},
+    {"turn": 6, "text": "04/28", "category": "CreditCard"}
+  ]
+}
